@@ -54,6 +54,8 @@ mongoose.connect(process.env.MONGO_URI, {
 .catch((err) => console.error("❌ MongoDB connection error:", err));
 
 // Session middleware (store sessions in MongoDB)
+app.set('trust proxy', 1); // trust first proxy (important for Render / Heroku)
+
 app.use(
   session({
     name: process.env.SESSION_COOKIE_NAME || "sid",
