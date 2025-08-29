@@ -2,11 +2,10 @@
   "name": "auth-backend",
   "version": "1.0.0",
   "main": "index.js",
-"scripts": {
-  "start": "node server.js",
-  "dev": "nodemon server.js"
-}
-,
+  "scripts": {
+    "start": "node index.js",
+    "dev": "nodemon index.js"
+  },
   "keywords": [],
   "author": "",
   "license": "ISC",
