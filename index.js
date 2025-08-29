@@ -16,8 +16,9 @@ app.use(express.json());
 // Allow credentials so browser will send/receive cookies
 const allowedOrigins = [
   "http://localhost:3000",
-  "https://bildare.vercel.app/"  // replace with your actual Vercel domain
+  "https://bildare.vercel.app"  // ✅ removed trailing slash
 ];
+
 
 app.use(cors({
   origin: function (origin, callback) {
@@ -494,5 +495,12 @@ app.get("/active-users", (req, res) => {
   });
 });
 
+// Root route (for testing)
+app.get("/", (req, res) => {
+  res.send("🚀 Bildare backend is running!");
+});
 
-app.listen(5000, () => console.log("Server running on http://localhost:5000"));
+// Use PORT provided by Render or fallback for local dev
+const PORT = process.env.PORT || 5000;
+app.listen(PORT, () => console.log(`✅ Server running on port ${PORT}`));
+
