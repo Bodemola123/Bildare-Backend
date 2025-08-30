@@ -69,7 +69,7 @@ app.use(
     cookie: {
       httpOnly: true,
       secure: true, // must be HTTPS in production
-      sameSite: "none", // allow cross-origin
+      sameSite: "lax", // allow cross-origin
       maxAge: 7 * 24 * 60 * 60 * 1000,
     },
   })
