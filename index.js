@@ -13,23 +13,24 @@ const MongoStore = require("connect-mongo");
 const app = express();
 app.use(express.json());
 
-// Allow credentials so browser will send/receive cookies
+// CORS middleware
 const allowedOrigins = [
-  "http://localhost:3000",
-  "https://bildare.vercel.app"  // ✅ removed trailing slash
+  "http://localhost:3000",       // local dev
+  "https://bildare.vercel.app"   // production
 ];
 
-
-app.use(cors({
-  origin: function (origin, callback) {
-    if (!origin || allowedOrigins.includes(origin)) {
-      callback(null, true);
-    } else {
-      callback(new Error("Not allowed by CORS"));
-    }
-  },
-  credentials: true,
-}));
+app.use(
+  require("cors")({
+    origin: function (origin, callback) {
+      if (!origin || allowedOrigins.includes(origin)) {
+        callback(null, true);
+      } else {
+        callback(new Error("Not allowed by CORS"));
+      }
+    },
+    credentials: true, // allows browser/mobile to send cookies
+  })
+);
 
 
 const SECRET_KEY = process.env.JWT_SECRET || "supersecret";
@@ -56,6 +57,8 @@ mongoose.connect(process.env.MONGO_URI, {
 // Session middleware (store sessions in MongoDB)
 app.set('trust proxy', 1); // trust first proxy (important for Render / Heroku)
 
+const isProduction = process.env.NODE_ENV === "production";
+
 app.use(
   session({
     name: process.env.SESSION_COOKIE_NAME || "sid",
@@ -67,13 +70,14 @@ app.use(
       collectionName: "sessions",
     }),
     cookie: {
-      httpOnly: true,
-      secure: true,       // ✅ requires HTTPS (Vercel + Render use HTTPS)
-      sameSite: "none",   // ✅ required for cross-origin cookies
-      maxAge: 7 * 24 * 60 * 60 * 1000,
+      httpOnly: true,                    // prevents JS access to cookie
+      secure: isProduction,              // ✅ HTTPS required in production
+      sameSite: isProduction ? "none" : "lax", // cross-site cookies only in prod
+      maxAge: 7 * 24 * 60 * 60 * 1000,   // 7 days
     },
   })
 );
+
 
 
 // User schema
@@ -125,6 +129,68 @@ app.use((req, res, next) => {
   console.log(`Incoming request: ${req.method} ${req.url}`);
   next();
 });
+
+const passport = require("passport");
+const GoogleStrategy = require("passport-google-oauth20").Strategy;
+
+// Configure Google OAuth strategy
+passport.use(
+  new GoogleStrategy(
+    {
+      clientID: process.env.GOOGLE_CLIENT_ID,
+      clientSecret: process.env.GOOGLE_CLIENT_SECRET,
+      callbackURL: process.env.NODE_ENV === "production"
+        ? "https://bildare-backend.onrender.com/auth/google/callback"
+        : "http://localhost:5000/auth/google/callback",
+    },
+    async (accessToken, refreshToken, profile, done) => {
+      try {
+        // Find or create user in DB
+        let user = await User.findOne({ email: profile.emails[0].value });
+        if (!user) {
+          user = await User.create({
+            name: profile.displayName,
+            email: profile.emails[0].value,
+            verified: true, // Google account verified
+            role: "user",
+          });
+        }
+
+        // Generate JWT tokens (like email/password login)
+        const access = jwt.sign(
+          { email: user.email, role: user.role },
+          process.env.JWT_SECRET || "supersecret",
+          { expiresIn: "1h" }
+        );
+        const refresh = jwt.sign(
+          { email: user.email },
+          process.env.JWT_REFRESH_SECRET || (process.env.JWT_SECRET || "supersecret"),
+          { expiresIn: "7d" }
+        );
+
+        user.refreshToken = refresh;
+        await user.save();
+
+        // Store in session
+        done(null, { ...user.toObject(), accessToken: access, refreshToken: refresh });
+      } catch (err) {
+        done(err, null);
+      }
+    }
+  )
+);
+
+// Initialize passport
+app.use(passport.initialize());
+app.use(passport.session());
+
+// Serialize/deserialize user for session
+passport.serializeUser((user, done) => done(null, user.email));
+passport.deserializeUser(async (email, done) => {
+  const user = await User.findOne({ email });
+  done(null, user ? user.toObject() : null);
+});
+
 
 // ---------- ROUTES ----------
 
@@ -287,11 +353,28 @@ app.post("/login", async (req, res) => {
 
 // 5️⃣ Me — returns session info
 app.get("/me", (req, res) => {
-  if (!req.session.user) return res.status(401).json({ error: "Not authenticated" });
-  // return safe copy
-  const { email, name, role } = req.session.user;
-  res.json({ email, name, role });
+  // Email/password login
+  if (req.session.user) {
+    const { email, name, role } = req.session.user;
+    return res.json({ email, name, role });
+  }
+
+  // Google login via Passport
+  if (req.session.passport?.user && req.user) {
+    const user = req.user;
+    return res.json({
+      email: user.email,
+      name: user.name,
+      role: user.role,
+      accessToken: user.accessToken,
+      refreshToken: user.refreshToken,
+    });
+  }
+
+  // Not authenticated
+  res.status(401).json({ error: "Not authenticated" });
 });
+
 
 // Logout
 app.post("/logout", (req, res) => {
@@ -497,6 +580,76 @@ app.get("/active-users", (req, res) => {
     });
   });
 });
+
+// Start Google login
+app.get(
+  "/auth/google",
+  passport.authenticate("google", { scope: ["profile", "email"] })
+);
+
+// Google callback
+app.get(
+  "/auth/google/callback",
+  passport.authenticate("google", { failureRedirect: "/login", session: true }),
+  (req, res) => {
+    // Session now contains user info + tokens
+    // Redirect to frontend (Vercel)
+    res.redirect("https://bildare.vercel.app/");
+  }
+);
+
+// POST endpoint to receive form submissions
+app.post("/contact", async (req, res) => {
+  try {
+    const { name, email, subject, message } = req.body;
+
+    if (!name || !email || !subject || !message) {
+      return res.status(400).json({ error: "All fields are required." });
+    }
+
+    // Compose email content
+    const mailOptions = {
+      from: `"Bildare Website Contact" <${process.env.EMAIL_USER}>`,
+      to: "bildare.auth@gmail.com",
+      subject: `📩 New Contact Form Submission: ${subject}`,
+      html: `
+      <div style="margin:0; padding:0; font-family: 'Helvetica', Arial, sans-serif; background-color:#f4f4f4;">
+        <table width="100%" cellpadding="0" cellspacing="0" style="max-width:600px; margin:auto; background:#ffffff; border-radius:12px; overflow:hidden; box-shadow:0 0 10px rgba(0,0,0,0.1);">
+          <tr>
+            <td style="background-color:#B9F500; text-align:center; padding:20px;">
+              <h1 style="margin:0; font-size:24px; color:#000;">Bildare Contact Form</h1>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:20px; color:#333;">
+              <p style="margin:0 0 10px;"><strong>Name:</strong> ${name}</p>
+              <p style="margin:0 0 10px;"><strong>Email:</strong> ${email}</p>
+              <p style="margin:0 0 10px;"><strong>Subject:</strong> ${subject}</p>
+              <p style="margin:20px 0 5px;"><strong>Message:</strong></p>
+              <div style="padding:15px; background:#f9f9f9; border-radius:8px; color:#555; line-height:1.5;">
+                ${message.replace(/\n/g, "<br>")}
+              </div>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:20px; text-align:center; font-size:12px; color:#888;">
+              This message was sent from the Bildare website contact form.
+            </td>
+          </tr>
+        </table>
+      </div>
+      `,
+    };
+
+    await transporter.sendMail(mailOptions);
+
+    res.json({ message: "Your message has been sent successfully!" });
+  } catch (err) {
+    console.error("Error sending contact email:", err);
+    res.status(500).json({ error: "Failed to send message." });
+  }
+});
+
 
 // Root route (for testing)
 app.get("/", (req, res) => {
