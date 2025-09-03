@@ -68,12 +68,13 @@ app.use(
     }),
     cookie: {
       httpOnly: true,
-      secure: true, // must be HTTPS in production
-      sameSite: "lax", // allow cross-origin
+      secure: true,       // ✅ requires HTTPS (Vercel + Render use HTTPS)
+      sameSite: "none",   // ✅ required for cross-origin cookies
       maxAge: 7 * 24 * 60 * 60 * 1000,
     },
   })
 );
+
 
 // User schema
 const userSchema = new mongoose.Schema({
