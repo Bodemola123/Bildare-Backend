@@ -71,7 +71,7 @@ app.use(
     }),
     cookie: {
       httpOnly: true,                    // prevents JS access to cookie
-      secure: true,              // ✅ HTTPS required in production
+      secure: isProduction,              // ✅ HTTPS required in production
       sameSite: "none", // cross-site cookies only in prod
       maxAge: 7 * 24 * 60 * 60 * 1000,   // 7 days
     },
