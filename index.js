@@ -59,6 +59,7 @@ app.set("trust proxy", 1); // keep this
 
 const isProduction = process.env.NODE_ENV === "production";
 
+// ---- Session middleware (single cookie manager) ----
 app.use(
   session({
     name: process.env.SESSION_COOKIE_NAME || "sid",
@@ -71,12 +72,15 @@ app.use(
     }),
     cookie: {
       httpOnly: true,
-      secure: isProduction ? true : false,            // required when sameSite = 'none'
-      sameSite: isProduction ? "none" : "lax",       // cross-site OAuth needs 'none'
+      secure: isProduction,                 // ✅ true in prod
+      sameSite: isProduction ? "none" : "lax", // ✅ allows cross-site OAuth
       maxAge: 7 * 24 * 60 * 60 * 1000,
     },
   })
 );
+
+// ---- Passport (only initialize, no session) ----
+app.use(passport.initialize());
 
 // User schema
 const userSchema = new mongoose.Schema({
@@ -353,13 +357,12 @@ app.post("/login", async (req, res) => {
   }
 });
 
-// 5️⃣ Me — returns session info
+// ---- Unified /me route ----
 app.get("/me", (req, res) => {
   if (req.session.user) {
     const { email, name, role, accessToken, refreshToken } = req.session.user;
     return res.json({ email, name, role, accessToken, refreshToken });
   }
-
   res.status(401).json({ error: "Not authenticated" });
 });
 
@@ -571,23 +574,19 @@ app.get("/active-users", (req, res) => {
 });
 
 // Start Google login
-app.get(
-  "/auth/google",
-  passport.authenticate("google", { scope: ["profile", "email"] })
-);
+// ---- Google OAuth ----
+app.get("/auth/google", passport.authenticate("google", { scope: ["profile", "email"] }));
 
-// Google callback
 app.get(
   "/auth/google/callback",
-  passport.authenticate("google", { failureRedirect: "/login", session: false }), // 🔑 disable passport session
+  passport.authenticate("google", { failureRedirect: "/login", session: false }),
   (req, res) => {
-    // Passport gives you req.user from the strategy
     const { email, name, role, accessToken, refreshToken } = req.user;
 
-    // Save it in your session (same shape as email/password login)
+    // ✅ Put user into the same session cookie ("sid")
     req.session.user = { email, name, role, accessToken, refreshToken };
 
-    // Redirect to frontend
+    // ✅ Send back to frontend (cookie already set by express-session)
     res.redirect("https://bildare.vercel.app/");
   }
 );
