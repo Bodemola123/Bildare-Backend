@@ -22,18 +22,15 @@ const allowedOrigins = [
   "https://bildare.vercel.app"   // production
 ];
 
-app.use(
-  require("cors")({
-    origin: function (origin, callback) {
-      if (!origin || allowedOrigins.includes(origin)) {
-        callback(null, true);
-      } else {
-        callback(new Error("Not allowed by CORS"));
-      }
-    },
-    credentials: true, // allows browser/mobile to send cookies
-  })
-);
+// --- CORS middleware ---
+app.use(cors({
+  origin: function(origin, callback) {
+    if (!origin || allowedOrigins.includes(origin)) return callback(null, true);
+    return callback(new Error("Not allowed by CORS"));
+  },
+  credentials: true, // important for cookies
+}));
+
 
 
 const SECRET_KEY = process.env.JWT_SECRET || "supersecret";
@@ -89,7 +86,7 @@ app.use(passport.initialize());
 const userSchema = new mongoose.Schema({
   name: { type: String },
   email: { type: String, required: true, unique: true },
-  password: { type: String, required: true },
+  password: { type: String, required: false },
   role: { type: String },
   otp: { type: String },
   otpExpires: { type: Date },
@@ -186,11 +183,6 @@ passport.use(
     }
   )
 );
-
-// ✅ already initialized earlier, so DO NOT repeat:
-// app.use(passport.initialize());
-
-
 
 
 // ---------- ROUTES ----------
