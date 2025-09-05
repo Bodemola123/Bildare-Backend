@@ -55,7 +55,7 @@ mongoose.connect(process.env.MONGO_URI, {
 .catch((err) => console.error("❌ MongoDB connection error:", err));
 
 // Session middleware (store sessions in MongoDB)
-app.set('trust proxy', 1); // trust first proxy (important for Render / Heroku)
+app.set("trust proxy", 1); // keep this
 
 const isProduction = process.env.NODE_ENV === "production";
 
@@ -70,15 +70,13 @@ app.use(
       collectionName: "sessions",
     }),
     cookie: {
-      httpOnly: true,                    // prevents JS access to cookie
-      secure: isProduction,              // ✅ HTTPS required in production
-      sameSite: isProduction ? "none" : "lax", // allow cross-site only in prod
-      maxAge: 7 * 24 * 60 * 60 * 1000,   // 7 days
+      httpOnly: true,
+      secure: isProduction ? true : false,            // required when sameSite = 'none'
+      sameSite: isProduction ? "none" : "lax",       // cross-site OAuth needs 'none'
+      maxAge: 7 * 24 * 60 * 60 * 1000,
     },
   })
 );
-
-
 
 // User schema
 const userSchema = new mongoose.Schema({
