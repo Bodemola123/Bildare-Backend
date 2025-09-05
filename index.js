@@ -71,8 +71,8 @@ app.use(
     }),
     cookie: {
       httpOnly: true,                    // prevents JS access to cookie
-      secure: true,              // ✅ HTTPS required in production
-      sameSite: "none"  , // cross-site cookies only in prod
+      secure: isProduction,              // ✅ HTTPS required in production
+      sameSite: isProduction ? "none" : "lax", // allow cross-site only in prod
       maxAge: 7 * 24 * 60 * 60 * 1000,   // 7 days
     },
   })
@@ -133,15 +133,15 @@ app.use((req, res, next) => {
 const passport = require("passport");
 const GoogleStrategy = require("passport-google-oauth20").Strategy;
 
-// Configure Google OAuth strategy
 passport.use(
   new GoogleStrategy(
     {
       clientID: process.env.GOOGLE_CLIENT_ID,
       clientSecret: process.env.GOOGLE_CLIENT_SECRET,
-      callbackURL: process.env.NODE_ENV === "production"
-        ? "https://bildare-backend.onrender.com/auth/google/callback"
-        : "http://localhost:5000/auth/google/callback",
+      callbackURL:
+        process.env.NODE_ENV === "production"
+          ? "https://bildare-backend.onrender.com/auth/google/callback"
+          : "http://localhost:5000/auth/google/callback",
     },
     async (accessToken, refreshToken, profile, done) => {
       try {
@@ -151,17 +151,18 @@ passport.use(
           user = await User.create({
             name: profile.displayName,
             email: profile.emails[0].value,
-            verified: true, // Google account verified
+            verified: true,
             role: "user",
           });
         }
 
-        // Generate JWT tokens (like email/password login)
+        // Generate JWT tokens
         const access = jwt.sign(
           { email: user.email, role: user.role },
           process.env.JWT_SECRET || "supersecret",
           { expiresIn: "1h" }
         );
+
         const refresh = jwt.sign(
           { email: user.email },
           process.env.JWT_REFRESH_SECRET || (process.env.JWT_SECRET || "supersecret"),
@@ -171,8 +172,14 @@ passport.use(
         user.refreshToken = refresh;
         await user.save();
 
-        // Store in session
-        done(null, { ...user.toObject(), accessToken: access, refreshToken: refresh });
+        // Pass everything through req.user
+        done(null, {
+          email: user.email,
+          name: user.name,
+          role: user.role,
+          accessToken: access,
+          refreshToken: refresh,
+        });
       } catch (err) {
         done(err, null);
       }
@@ -180,16 +187,13 @@ passport.use(
   )
 );
 
-// Initialize passport
+// Only initialize, no sessions
 app.use(passport.initialize());
-app.use(passport.session());
+// ❌ remove this
+// app.use(passport.session());
 
-// Serialize/deserialize user for session
-passport.serializeUser((user, done) => done(null, user.email));
-passport.deserializeUser(async (email, done) => {
-  const user = await User.findOne({ email });
-  done(null, user ? user.toObject() : null);
-});
+// ❌ remove serializeUser / deserializeUser
+
 
 
 // ---------- ROUTES ----------
@@ -353,27 +357,14 @@ app.post("/login", async (req, res) => {
 
 // 5️⃣ Me — returns session info
 app.get("/me", (req, res) => {
-  // Email/password login
   if (req.session.user) {
-    const { email, name, role } = req.session.user;
-    return res.json({ email, name, role });
+    const { email, name, role, accessToken, refreshToken } = req.session.user;
+    return res.json({ email, name, role, accessToken, refreshToken });
   }
 
-  // Google login via Passport
-  if (req.session.passport?.user && req.user) {
-    const user = req.user;
-    return res.json({
-      email: user.email,
-      name: user.name,
-      role: user.role,
-      accessToken: user.accessToken,
-      refreshToken: user.refreshToken,
-    });
-  }
-
-  // Not authenticated
   res.status(401).json({ error: "Not authenticated" });
 });
+
 
 
 // Logout
@@ -590,13 +581,19 @@ app.get(
 // Google callback
 app.get(
   "/auth/google/callback",
-  passport.authenticate("google", { failureRedirect: "/login", session: true }),
+  passport.authenticate("google", { failureRedirect: "/login", session: false }), // 🔑 disable passport session
   (req, res) => {
-    // Session now contains user info + tokens
-    // Redirect to frontend (Vercel)
+    // Passport gives you req.user from the strategy
+    const { email, name, role, accessToken, refreshToken } = req.user;
+
+    // Save it in your session (same shape as email/password login)
+    req.session.user = { email, name, role, accessToken, refreshToken };
+
+    // Redirect to frontend
     res.redirect("https://bildare.vercel.app/");
   }
 );
+
 
 // POST endpoint to receive form submissions
 app.post("/contact", async (req, res) => {
