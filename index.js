@@ -10,6 +10,9 @@ const mongoose = require("mongoose");
 const session = require("express-session");
 const MongoStore = require("connect-mongo");
 
+const passport = require("passport");
+const GoogleStrategy = require("passport-google-oauth20").Strategy;
+
 const app = express();
 app.use(express.json());
 
@@ -132,8 +135,6 @@ app.use((req, res, next) => {
   next();
 });
 
-const passport = require("passport");
-const GoogleStrategy = require("passport-google-oauth20").Strategy;
 
 passport.use(
   new GoogleStrategy(
