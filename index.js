@@ -148,7 +148,6 @@ passport.use(
     },
     async (accessToken, refreshToken, profile, done) => {
       try {
-        // Find or create user in DB
         let user = await User.findOne({ email: profile.emails[0].value });
         if (!user) {
           user = await User.create({
@@ -159,7 +158,6 @@ passport.use(
           });
         }
 
-        // Generate JWT tokens
         const access = jwt.sign(
           { email: user.email, role: user.role },
           process.env.JWT_SECRET || "supersecret",
@@ -175,7 +173,6 @@ passport.use(
         user.refreshToken = refresh;
         await user.save();
 
-        // Pass everything through req.user
         done(null, {
           email: user.email,
           name: user.name,
@@ -190,12 +187,9 @@ passport.use(
   )
 );
 
-// Only initialize, no sessions
-app.use(passport.initialize());
-// ❌ remove this
-// app.use(passport.session());
+// ✅ already initialized earlier, so DO NOT repeat:
+// app.use(passport.initialize());
 
-// ❌ remove serializeUser / deserializeUser
 
 
 
