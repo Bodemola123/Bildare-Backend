@@ -171,6 +171,7 @@ passport.use(
         await user.save();
 
         done(null, {
+          id: user._id,
           email: user.email,
           name: user.name,
           role: user.role,
@@ -274,7 +275,7 @@ app.post("/verify-otp", async (req, res) => {
 });
 
 // 3️⃣ Complete Profile (now issues tokens and creates session)
-app.post("/complete-profile", async (req, res) => {
+app.post("/complete-profile", async (req, res) => { 
   try {
     const { email, name, role } = req.body;
     if (!email || !name || !role) return res.status(400).json({ error: "Email, name, and role are required" });
@@ -286,15 +287,15 @@ app.post("/complete-profile", async (req, res) => {
     user.name = name;
     user.role = role;
 
-    // Generate tokens
     const accessToken = jwt.sign({ email: user.email, role: role }, process.env.JWT_SECRET || SECRET_KEY, { expiresIn: "1h" });
     const refreshToken = jwt.sign({ email: user.email }, process.env.JWT_REFRESH_SECRET || (process.env.JWT_SECRET || SECRET_KEY), { expiresIn: "7d" });
 
     user.refreshToken = refreshToken;
     await user.save();
 
-    // store session data (email, name, role, tokens)
+    // include user id in session
     req.session.user = {
+      id: user._id,
       email: user.email,
       name: user.name,
       role: user.role,
@@ -302,12 +303,18 @@ app.post("/complete-profile", async (req, res) => {
       refreshToken,
     };
 
-    res.json({ message: "Profile completed successfully!", name: user.name, role: user.role });
+    res.json({ 
+      message: "Profile completed successfully!", 
+      id: user._id,
+      name: user.name, 
+      role: user.role 
+    });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "Server error" });
   }
 });
+
 
 // 4️⃣ Login (creates session)
 app.post("/login", async (req, res) => {
@@ -328,8 +335,8 @@ app.post("/login", async (req, res) => {
     user.refreshToken = refreshToken;
     await user.save();
 
-    // store session data
     req.session.user = {
+      id: user._id,
       email: user.email,
       name: user.name,
       role: user.role,
@@ -337,21 +344,28 @@ app.post("/login", async (req, res) => {
       refreshToken,
     };
 
-    res.json({ message: "Login successful", name: user.name, role: user.role });
+    res.json({ 
+      message: "Login successful", 
+      id: user._id,
+      name: user.name, 
+      role: user.role 
+    });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "Server error" });
   }
 });
 
+
 // ---- Unified /me route ----
 app.get("/me", (req, res) => {
   if (req.session.user) {
-    const { email, name, role, accessToken, refreshToken } = req.session.user;
-    return res.json({ email, name, role, accessToken, refreshToken });
+    const { id, email, name, role, accessToken, refreshToken } = req.session.user;
+    return res.json({ id, email, name, role, accessToken, refreshToken });
   }
   res.status(401).json({ error: "Not authenticated" });
 });
+
 
 
 
@@ -568,15 +582,14 @@ app.get(
   "/auth/google/callback",
   passport.authenticate("google", { failureRedirect: "/login", session: false }),
   (req, res) => {
-    const { email, name, role, accessToken, refreshToken } = req.user;
+    const { id, email, name, role, accessToken, refreshToken } = req.user;
 
-    // ✅ Put user into the same session cookie ("sid")
-    req.session.user = { email, name, role, accessToken, refreshToken };
+    req.session.user = { id, email, name, role, accessToken, refreshToken };
 
-    // ✅ Send back to frontend (cookie already set by express-session)
     res.redirect("https://bildare.vercel.app/");
   }
 );
+
 
 
 // POST endpoint to receive form submissions
