@@ -12,6 +12,7 @@ const MongoStore = require("connect-mongo");
 
 const passport = require("passport");
 const GoogleStrategy = require("passport-google-oauth20").Strategy;
+const GitHubStrategy = require("passport-github2").Strategy;
 
 const app = express();
 app.use(express.json());
@@ -155,6 +156,69 @@ passport.use(
           });
         }
 
+        const access = jwt.sign(
+          { email: user.email, role: user.role },
+          process.env.JWT_SECRET || "supersecret",
+          { expiresIn: "1h" }
+        );
+
+        const refresh = jwt.sign(
+          { email: user.email },
+          process.env.JWT_REFRESH_SECRET || (process.env.JWT_SECRET || "supersecret"),
+          { expiresIn: "7d" }
+        );
+
+        user.refreshToken = refresh;
+        await user.save();
+
+        done(null, {
+          id: user._id,
+          email: user.email,
+          name: user.name,
+          role: user.role,
+          accessToken: access,
+          refreshToken: refresh,
+        });
+      } catch (err) {
+        done(err, null);
+      }
+    }
+  )
+);
+
+passport.use(
+  new GitHubStrategy(
+    {
+      clientID: process.env.GITHUB_CLIENT_ID,
+      clientSecret: process.env.GITHUB_CLIENT_SECRET,
+      callbackURL:
+        process.env.NODE_ENV === "production"
+          ? "https://bildare-backend.onrender.com/auth/github/callback"
+          : "http://localhost:5000/auth/github/callback",
+      scope: ["user:email"], // request user's email
+    },
+    async (accessToken, refreshToken, profile, done) => {
+      try {
+        // GitHub may not return email in profile.emails[0], so handle carefully
+        const email =
+          profile.emails && profile.emails[0] ? profile.emails[0].value : null;
+
+        if (!email) {
+          return done(new Error("GitHub email not available"), null);
+        }
+
+        // Find or create user
+        let user = await User.findOne({ email });
+        if (!user) {
+          user = await User.create({
+            name: profile.displayName || profile.username,
+            email,
+            verified: true,
+            role: "user",
+          });
+        }
+
+        // Generate JWT tokens
         const access = jwt.sign(
           { email: user.email, role: user.role },
           process.env.JWT_SECRET || "supersecret",
@@ -580,7 +644,7 @@ app.get("/auth/google", passport.authenticate("google", { scope: ["profile", "em
 
 app.get(
   "/auth/google/callback",
-  passport.authenticate("google", { failureRedirect: "/login", session: false }),
+  passport.authenticate("google", { failureRedirect: "/auth", session: false }),
   (req, res) => {
     const { id, email, name, role, accessToken, refreshToken } = req.user;
 
@@ -589,6 +653,24 @@ app.get(
     res.redirect("https://bildare.vercel.app/");
   }
 );
+
+// Start GitHub login
+app.get("/auth/github", passport.authenticate("github"));
+
+// GitHub callback
+app.get(
+  "/auth/github/callback",
+  passport.authenticate("github", { failureRedirect: "/auth", session: false }),
+  (req, res) => {
+    const { id, email, name, role, accessToken, refreshToken } = req.user;
+
+    // Save to same session as normal login
+    req.session.user = { id, email, name, role, accessToken, refreshToken };
+
+    res.redirect("https://bildare.vercel.app/");
+  }
+);
+
 
 
 
