@@ -1,105 +1,95 @@
+// server-setup.js (or paste at top of your existing index.js before routes)
+
+// core
 const express = require("express");
 const bcrypt = require("bcrypt");
 const jwt = require("jsonwebtoken");
 const cors = require("cors");
 const nodemailer = require("nodemailer");
 require("dotenv").config();
-const mongoose = require("mongoose");
 
-// session
+// Prisma
+const { PrismaClient } = require("@prisma/client");
+const prisma = new PrismaClient(); // instantiate Prisma Client
+
+// sessions (load session BEFORE connect-pg-simple)
 const session = require("express-session");
-const MongoStore = require("connect-mongo");
+const pgSession = require("connect-pg-simple")(session); // store class
+// NOTE: connect-pg-simple requires 'pg' package installed (npm install pg connect-pg-simple)
 
+// passport (OAuth)
 const passport = require("passport");
 const GoogleStrategy = require("passport-google-oauth20").Strategy;
 const GitHubStrategy = require("passport-github2").Strategy;
 
+const crypto = require("crypto");
+
 const app = express();
 app.use(express.json());
 
-// CORS middleware
+// CORS config
 const allowedOrigins = [
   "http://localhost:3000",       // local dev
   "https://bildare.vercel.app"   // production
 ];
 
-// --- CORS middleware ---
 app.use(cors({
-  origin: function(origin, callback) {
-    if (!origin || allowedOrigins.includes(origin)) return callback(null, true);
+  origin: function (origin, callback) {
+    // allow requests with no origin (e.g. mobile apps, curl)
+    if (!origin) return callback(null, true);
+    if (allowedOrigins.includes(origin)) return callback(null, true);
     return callback(new Error("Not allowed by CORS"));
   },
-  credentials: true, // important for cookies
+  credentials: true, // allow cookies
 }));
 
+const isProduction = process.env.NODE_ENV === "production";
+app.set("trust proxy", 1); // if behind a proxy (like Heroku/Render)
 
+// Session middleware using Postgres (connect-pg-simple)
+app.use(session({
+  name: process.env.SESSION_COOKIE_NAME || "sid",
+  secret: process.env.SESSION_SECRET || "sessionsecret",
+  resave: false,
+  saveUninitialized: false,
+  store: new pgSession({
+    // supply connection string (or a pool) for connect-pg-simple
+    conString: process.env.DATABASE_URL,
+    tableName: "session",
+  }),
+  cookie: {
+    httpOnly: true,
+    secure: isProduction,                 // true in production (requires HTTPS)
+    sameSite: isProduction ? "none" : "lax",
+    maxAge: 7 * 24 * 60 * 60 * 1000,     // 7 days
+  },
+}));
 
+// Passport initialization (we are issuing JWTs so passport.session() is optional)
+// If you plan to use sessions with passport, uncomment the line below:
+// app.use(passport.session());
+app.use(passport.initialize());
+
+// Logger middleware
+app.use((req, res, next) => {
+  console.log(`Incoming request: ${req.method} ${req.url}`);
+  next();
+});
+
+// JWT settings
 const SECRET_KEY = process.env.JWT_SECRET || "supersecret";
+const REFRESH_SECRET = process.env.JWT_REFRESH_SECRET || process.env.JWT_SECRET || "supersecret_refresh";
 
-// 📧 Setup email transporter (TLS on port 587)
+// Nodemailer transporter
 const transporter = nodemailer.createTransport({
   host: "smtp.gmail.com",
   port: 587,
-  secure: false, // false for TLS (STARTTLS)
+  secure: false, // use STARTTLS
   auth: {
     user: process.env.EMAIL_USER,
     pass: process.env.EMAIL_PASS,
   },
 });
-
-// Connect to MongoDB
-mongoose.connect(process.env.MONGO_URI, {
-  useNewUrlParser: true,
-  useUnifiedTopology: true,
-})
-.then(() => console.log("✅ Connected to MongoDB Atlas"))
-.catch((err) => console.error("❌ MongoDB connection error:", err));
-
-// Session middleware (store sessions in MongoDB)
-app.set("trust proxy", 1); // keep this
-
-const isProduction = process.env.NODE_ENV === "production";
-
-// ---- Session middleware (single cookie manager) ----
-app.use(
-  session({
-    name: process.env.SESSION_COOKIE_NAME || "sid",
-    secret: process.env.SESSION_SECRET || "sessionsecret",
-    resave: false,
-    saveUninitialized: false,
-    store: MongoStore.create({
-      mongoUrl: process.env.MONGO_URI,
-      collectionName: "sessions",
-    }),
-    cookie: {
-      httpOnly: true,
-      secure: isProduction,                 // ✅ true in prod
-      sameSite: isProduction ? "none" : "lax", // ✅ allows cross-site OAuth
-      maxAge: 7 * 24 * 60 * 60 * 1000,
-    },
-  })
-);
-
-// ---- Passport (only initialize, no session) ----
-app.use(passport.initialize());
-
-// User schema
-const userSchema = new mongoose.Schema({
-  name: { type: String },
-  email: { type: String, required: true, unique: true },
-  password: { type: String, required: false },
-  role: { type: String },
-  otp: { type: String },
-  otpExpires: { type: Date },
-  verified: { type: Boolean, default: false },
-  refreshToken: { type: String },
-  resetPasswordToken: { type: String },
-  resetPasswordExpires: { type: Date },
-});
-
-const User = mongoose.model("User", userSchema);
-
-const crypto = require("crypto");
 
 // Helper function: send OTP email (safe - catches errors)
 const sendOtpEmail = async (email, otp) => {
@@ -124,159 +114,202 @@ const sendOtpEmail = async (email, otp) => {
     console.log("✅ OTP email sent to", email);
   } catch (err) {
     console.error("❌ Failed to send OTP email:", err.message || err);
-    // do not throw — signup should still succeed; frontend can show notice
+    // don't throw — signup should still continue; frontend can show notice
   }
 };
 
-app.use((req, res, next) => {
-  console.log(`Incoming request: ${req.method} ${req.url}`);
-  next();
-});
+/*
+  Passport OAuth strategies using Prisma
+  - We will: find user by email; if not present, create user in prisma.user
+  - Prisma field names follow your schema: user_id, username, email, is_verified, role, refresh_token
+*/
 
+// Utility to generate tokens and persist refresh token in DB
+async function createAndStoreTokensForUser(user) {
+  const accessToken = jwt.sign(
+    { email: user.email, role: user.role },
+    SECRET_KEY,
+    { expiresIn: "1h" }
+  );
 
-passport.use(
-  new GoogleStrategy(
-    {
-      clientID: process.env.GOOGLE_CLIENT_ID,
-      clientSecret: process.env.GOOGLE_CLIENT_SECRET,
-      callbackURL:
-        process.env.NODE_ENV === "production"
-          ? "https://bildare-backend.onrender.com/auth/google/callback"
-          : "http://localhost:5000/auth/google/callback",
-    },
-    async (accessToken, refreshToken, profile, done) => {
-      try {
-        let user = await User.findOne({ email: profile.emails[0].value });
-        if (!user) {
-          user = await User.create({
-            name: profile.displayName,
-            email: profile.emails[0].value,
-            verified: true,
-            role: "user",
-          });
-        }
+  const refreshToken = jwt.sign(
+    { email: user.email },
+    REFRESH_SECRET,
+    { expiresIn: "7d" }
+  );
 
-        const access = jwt.sign(
-          { email: user.email, role: user.role },
-          process.env.JWT_SECRET || "supersecret",
-          { expiresIn: "1h" }
-        );
+  // store refresh token in DB (field name in schema is `refresh_token`)
+  await prisma.user.update({
+    where: { email: user.email },
+    data: { refresh_token: refreshToken },
+  });
 
-        const refresh = jwt.sign(
-          { email: user.email },
-          process.env.JWT_REFRESH_SECRET || (process.env.JWT_SECRET || "supersecret"),
-          { expiresIn: "7d" }
-        );
+  return { accessToken, refreshToken };
+}
 
-        user.refreshToken = refresh;
-        await user.save();
+// GOOGLE STRATEGY
+passport.use(new GoogleStrategy({
+  clientID: process.env.GOOGLE_CLIENT_ID,
+  clientSecret: process.env.GOOGLE_CLIENT_SECRET,
+  callbackURL: process.env.NODE_ENV === "production"
+    ? "https://bildare-backend.onrender.com/auth/google/callback"
+    : "http://localhost:5000/auth/google/callback",
+}, async (accessToken, refreshToken, profile, done) => {
+  try {
+    const email = profile?.emails && profile.emails[0] ? profile.emails[0].value : null;
+    if (!email) return done(new Error("Google account has no email"), null);
 
-        done(null, {
-          id: user._id,
-          email: user.email,
-          name: user.name,
-          role: user.role,
-          accessToken: access,
-          refreshToken: refresh,
-        });
-      } catch (err) {
-        done(err, null);
-      }
+    // Find user by email
+    let user = await prisma.user.findUnique({ where: { email } });
+
+    if (!user) {
+      // Create user
+      user = await prisma.user.create({
+        data: {
+          username: profile.displayName || profile.name?.givenName || email.split("@")[0],
+          email,
+          is_verified: true,
+          role: "user",
+        },
+      });
+
+      // Create minimal UserProfile
+      await prisma.userProfile.create({
+        data: {
+          user_id: user.user_id,
+          first_name: profile.name?.givenName || null,
+          last_name: profile.name?.familyName || null,
+          bio: null,
+          avatar_url: profile.photos?.[0]?.value || null,
+        },
+      });
     }
-  )
-);
 
-passport.use(
-  new GitHubStrategy(
-    {
-      clientID: process.env.GITHUB_CLIENT_ID,
-      clientSecret: process.env.GITHUB_CLIENT_SECRET,
-      callbackURL:
-        process.env.NODE_ENV === "production"
-          ? "https://bildare-backend.onrender.com/auth/github/callback"
-          : "http://localhost:5000/auth/github/callback",
-      scope: ["user:email"], // request user's email
-    },
-    async (accessToken, refreshToken, profile, done) => {
-      try {
-        // GitHub may not return email in profile.emails[0], so handle carefully
-        const email =
-          profile.emails && profile.emails[0] ? profile.emails[0].value : null;
+    // Create and store JWT tokens
+    const tokens = await createAndStoreTokensForUser(user);
 
-        if (!email) {
-          return done(new Error("GitHub email not available"), null);
-        }
+    // Return normalized user object
+    return done(null, {
+      user_id: user.user_id,
+      email: user.email,
+      username: user.username,
+      role: user.role,
+      ...tokens,
+    });
+  } catch (err) {
+    return done(err, null);
+  }
+}));
 
-        // Find or create user
-        let user = await User.findOne({ email });
-        if (!user) {
-          user = await User.create({
-            name: profile.displayName || profile.username,
-            email,
-            verified: true,
-            role: "user",
-          });
-        }
 
-        // Generate JWT tokens
-        const access = jwt.sign(
-          { email: user.email, role: user.role },
-          process.env.JWT_SECRET || "supersecret",
-          { expiresIn: "1h" }
-        );
+// GITHUB STRATEGY
+passport.use(new GitHubStrategy({
+  clientID: process.env.GITHUB_CLIENT_ID,
+  clientSecret: process.env.GITHUB_CLIENT_SECRET,
+  callbackURL: process.env.NODE_ENV === "production"
+    ? "https://bildare-backend.onrender.com/auth/github/callback"
+    : "http://localhost:5000/auth/github/callback",
+  scope: ["user:email"],
+}, async (accessToken, refreshToken, profile, done) => {
+  try {
+    const email = profile?.emails && profile.emails[0] ? profile.emails[0].value : null;
+    if (!email) return done(new Error("GitHub email not available"), null);
 
-        const refresh = jwt.sign(
-          { email: user.email },
-          process.env.JWT_REFRESH_SECRET || (process.env.JWT_SECRET || "supersecret"),
-          { expiresIn: "7d" }
-        );
+    let user = await prisma.user.findUnique({ where: { email } });
 
-        user.refreshToken = refresh;
-        await user.save();
+    if (!user) {
+      // Create user
+      user = await prisma.user.create({
+        data: {
+          username: profile.displayName || profile.username || email.split("@")[0],
+          email,
+          is_verified: true,
+          role: "user",
+        },
+      });
 
-        done(null, {
-          id: user._id,
-          email: user.email,
-          name: user.name,
-          role: user.role,
-          accessToken: access,
-          refreshToken: refresh,
-        });
-      } catch (err) {
-        done(err, null);
-      }
+      // Create minimal UserProfile
+      await prisma.userProfile.create({
+        data: {
+          user_id: user.user_id,
+          first_name: profile.displayName || profile.username || null,
+          last_name: null,
+          bio: null,
+          avatar_url: profile.photos?.[0]?.value || null,
+        },
+      });
     }
-  )
-);
+
+    const tokens = await createAndStoreTokensForUser(user);
+
+    return done(null, {
+      user_id: user.user_id,
+      email: user.email,
+      username: user.username,
+      role: user.role,
+      ...tokens,
+    });
+  } catch (err) {
+    return done(err, null);
+  }
+}));
+
+
+// (Optional) If you want to use passport sessions uncomment and implement these:
+// passport.serializeUser((user, done) => done(null, user.user_id));
+// passport.deserializeUser(async (id, done) => {
+//   try {
+//     const user = await prisma.user.findUnique({ where: { user_id: id }});
+//     done(null, user);
+//   } catch (err) {
+//     done(err, null);
+//   }
+//});
+
+// Export app and prisma (optional - if you split into modules)
+// module.exports = { app, prisma };
+
+
 
 
 // ---------- ROUTES ----------
 
 // 1️⃣ Sign Up (request OTP)
+// Request OTP
 app.post("/signup", async (req, res) => {
   try {
     const { email, password } = req.body;
-    if (!email || !password) return res.status(400).json({ error: "Email and password are required" });
 
-    const existingUser = await User.findOne({ email });
-    if (existingUser) return res.status(400).json({ error: "Email already registered" });
+    if (!email || !password) {
+      return res.status(400).json({ error: "Email and password are required" });
+    }
+
+    const existingUser = await prisma.user.findUnique({ where: { email } });
+    if (existingUser) {
+      return res.status(400).json({ error: "Email already registered" });
+    }
 
     const hashedPassword = await bcrypt.hash(password, 10);
     const otp = Math.floor(100000 + Math.random() * 900000).toString();
-    const otpExpires = new Date(Date.now() + 10 * 60 * 1000);
+    const otp_expires = new Date(Date.now() + 10 * 60 * 1000); // 10 min
 
-    const newUser = await User.create({
-      email,
-      password: hashedPassword,
-      otp,
-      otpExpires,
-      verified: false,
+    await prisma.user.create({
+      data: {
+        email,
+        password_hash: hashedPassword,
+        otp,
+        otp_expires,
+        is_verified: false,
+      },
     });
 
-    // send OTP but don't block signup if email fails
+    // send OTP asynchronously
     sendOtpEmail(email, otp);
 
-    res.json({ message: "OTP sent to email. Please verify within 10 minutes.", email: newUser.email });
+    res.json({
+      message: "OTP sent to email. Please verify within 10 minutes.",
+      email,
+    });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "Server error" });
@@ -289,20 +322,17 @@ app.post("/resend-otp", async (req, res) => {
     const { email } = req.body;
     if (!email) return res.status(400).json({ error: "Email is required" });
 
-    const user = await User.findOne({ email });
+    const user = await prisma.user.findUnique({ where: { email } });
     if (!user) return res.status(400).json({ error: "User not found" });
-    if (user.verified) return res.status(400).json({ error: "Already verified" });
+    if (user.is_verified) return res.status(400).json({ error: "Already verified" });
 
     const otp = Math.floor(100000 + Math.random() * 900000).toString();
-    const otpExpires = new Date(Date.now() + 10 * 60 * 1000);
+    const otp_expires = new Date(Date.now() + 10 * 60 * 1000);
 
-    user.otp = otp;
-    user.otpExpires = otpExpires;
-    await user.save();
+    await prisma.user.update({ where: { email }, data: { otp, otp_expires } });
 
     sendOtpEmail(email, otp);
-
-    res.json({ message: "New OTP sent to email. Please verify within 10 minutes." });
+    res.json({ message: "New OTP sent to email." });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "Server error" });
@@ -315,64 +345,107 @@ app.post("/verify-otp", async (req, res) => {
     const { email, otp } = req.body;
     if (!email || !otp) return res.status(400).json({ error: "Email and OTP are required" });
 
-    const user = await User.findOne({ email });
+    const user = await prisma.user.findUnique({ where: { email } });
     if (!user) return res.status(400).json({ error: "User not found" });
-    if (user.verified) return res.status(400).json({ error: "Already verified" });
+    if (user.is_verified) return res.status(400).json({ error: "Already verified" });
 
-    if (!user.otp || !user.otpExpires || new Date() > user.otpExpires) {
-      return res.status(400).json({ error: "OTP has expired. Please request a new one." });
-    }
+    if (!user.otp || !user.otp_expires || new Date() > user.otp_expires)
+      return res.status(400).json({ error: "OTP expired. Request a new one." });
 
-    if (user.otp === otp) {
-      user.verified = true;
-      user.otp = undefined;
-      user.otpExpires = undefined;
-      await user.save();
-      res.json({ message: "OTP verified. Now complete your profile." });
-    } else {
-      res.status(400).json({ error: "Invalid OTP" });
-    }
+    if (user.otp !== otp) return res.status(400).json({ error: "Invalid OTP" });
+
+    await prisma.user.update({
+      where: { email },
+      data: { is_verified: true, otp: null, otp_expires: null },
+    });
+
+    res.json({ message: "OTP verified. Now complete your profile." });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "Server error" });
   }
 });
 
-// 3️⃣ Complete Profile (now issues tokens and creates session)
-app.post("/complete-profile", async (req, res) => { 
+
+// 3️⃣ Complete Profile (issues tokens, creates session, and profile)
+// Verify OTP then complete profile
+app.post("/complete-profile", async (req, res) => {
   try {
-    const { email, name, role } = req.body;
-    if (!email || !name || !role) return res.status(400).json({ error: "Email, name, and role are required" });
+    const { email, username, role, first_name, last_name, bio, avatar_url, interests } = req.body;
 
-    const user = await User.findOne({ email });
+    if (!email || !username || !role) {
+      return res.status(400).json({ error: "Email, username, and role are required" });
+    }
+
+    const user = await prisma.user.findUnique({ where: { email } });
     if (!user) return res.status(400).json({ error: "User not found" });
-    if (!user.verified) return res.status(400).json({ error: "Email not verified" });
+    if (!user.is_verified) return res.status(400).json({ error: "Email not verified" });
 
-    user.name = name;
-    user.role = role;
+    // Check if username is already taken
+    const existingUsername = await prisma.user.findUnique({ where: { username } });
+    if (existingUsername && existingUsername.user_id !== user.user_id) {
+      return res.status(400).json({ error: "Username already taken" });
+    }
 
-    const accessToken = jwt.sign({ email: user.email, role: role }, process.env.JWT_SECRET || SECRET_KEY, { expiresIn: "1h" });
-    const refreshToken = jwt.sign({ email: user.email }, process.env.JWT_REFRESH_SECRET || (process.env.JWT_SECRET || SECRET_KEY), { expiresIn: "7d" });
+    // Generate JWT tokens
+    const accessToken = jwt.sign(
+      { email: user.email, role },
+      process.env.JWT_SECRET,
+      { expiresIn: "1h" }
+    );
 
-    user.refreshToken = refreshToken;
-    await user.save();
+    const refreshToken = jwt.sign(
+      { email: user.email },
+      process.env.JWT_REFRESH_SECRET,
+      { expiresIn: "7d" }
+    );
 
-    // include user id in session
+    // Update user with username, role, refresh token, and optional interests
+    const updatedUser = await prisma.user.update({
+      where: { email },
+      data: {
+        username,
+        role,
+        refresh_token: refreshToken,
+        interests: interests || null,
+      },
+    });
+
+    // Create associated UserProfile if it does not exist
+    let profile = await prisma.userProfile.findUnique({ where: { user_id: updatedUser.user_id } });
+    if (!profile) {
+      profile = await prisma.userProfile.create({
+        data: {
+          user_id: updatedUser.user_id,
+          first_name: first_name || null,
+          last_name: last_name || null,
+          bio: bio || null,
+          avatar_url: avatar_url || null,
+        },
+      });
+    }
+
+    // Save session
     req.session.user = {
-      id: user._id,
-      email: user.email,
-      name: user.name,
-      role: user.role,
+      user_id: updatedUser.user_id,
+      email: updatedUser.email,
+      username,
+      role,
       accessToken,
       refreshToken,
+      profile_id: profile.profile_id,
     };
 
-    res.json({ 
-      message: "Profile completed successfully!", 
-      id: user._id,
-      name: user.name, 
-      role: user.role 
+    res.json({
+      message: "Profile completed successfully!",
+      user_id: updatedUser.user_id,
+      username,
+      role,
+      profile,
+      accessToken,
+      refreshToken,
     });
+
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "Server error" });
@@ -380,39 +453,118 @@ app.post("/complete-profile", async (req, res) => {
 });
 
 
-// 4️⃣ Login (creates session)
+// 4️⃣ Login
+// ======= /login =======
 app.post("/login", async (req, res) => {
   try {
     const { email, password } = req.body;
-    if (!email || !password) return res.status(400).json({ error: "Email and password are required" });
+    if (!email || !password) {
+      return res.status(400).json({ error: "Email and password required" });
+    }
 
-    const user = await User.findOne({ email });
+    // Find user including profile
+    const user = await prisma.user.findUnique({
+      where: { email },
+      include: { profile: true }, // include userProfile
+    });
+
     if (!user) return res.status(400).json({ error: "User not found" });
-    if (!user.verified) return res.status(400).json({ error: "Email not verified" });
+    if (!user.is_verified) return res.status(400).json({ error: "Email not verified" });
 
-    const valid = await bcrypt.compare(password, user.password);
+    const valid = await bcrypt.compare(password, user.password_hash);
     if (!valid) return res.status(400).json({ error: "Invalid password" });
 
-    const accessToken = jwt.sign({ email: user.email, role: user.role }, process.env.JWT_SECRET || SECRET_KEY, { expiresIn: "1h" });
-    const refreshToken = jwt.sign({ email: user.email }, process.env.JWT_REFRESH_SECRET || (process.env.JWT_SECRET || SECRET_KEY), { expiresIn: "7d" });
+    // Generate JWT tokens
+    const accessToken = jwt.sign(
+      { email: user.email, role: user.role, username: user.username },
+      process.env.JWT_SECRET,
+      { expiresIn: "1h" }
+    );
 
-    user.refreshToken = refreshToken;
-    await user.save();
+    const refreshToken = jwt.sign(
+      { email: user.email },
+      process.env.JWT_REFRESH_SECRET,
+      { expiresIn: "7d" }
+    );
 
+    // Update refresh token in DB
+    const updatedUser = await prisma.user.update({
+      where: { email },
+      data: { refresh_token: refreshToken },
+      include: { profile: true },
+    });
+
+    // Save session
     req.session.user = {
-      id: user._id,
-      email: user.email,
-      name: user.name,
-      role: user.role,
+      user_id: updatedUser.user_id,
+      email: updatedUser.email,
+      username: updatedUser.username,
+      role: updatedUser.role,
       accessToken,
       refreshToken,
+      profile_id: updatedUser.profile?.profile_id,
     };
 
-    res.json({ 
-      message: "Login successful", 
-      id: user._id,
-      name: user.name, 
-      role: user.role 
+    res.json({
+      message: "Login successful",
+      user_id: updatedUser.user_id,
+      username: updatedUser.username,
+      role: updatedUser.role,
+      profile: updatedUser.profile || null,
+      accessToken,
+      refreshToken,
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Server error" });
+  }
+});
+
+// ======= /me =======
+app.get("/me", async (req, res) => {
+  try {
+    if (!req.session.user) return res.status(401).json({ error: "Not authenticated" });
+
+    const user = await prisma.user.findUnique({
+      where: { user_id: req.session.user.user_id },
+      include: { profile: true }, // include UserProfile
+    });
+
+    if (!user) return res.status(404).json({ error: "User not found" });
+
+    res.json({
+      user_id: user.user_id,
+      email: user.email,
+      username: user.username,
+      role: user.role,
+      accessToken: req.session.user.accessToken,
+      refreshToken: req.session.user.refreshToken,
+      profile: user.profile || null,
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Server error" });
+  }
+});
+
+// ======= Protected profile =======
+app.get("/profile", async (req, res) => {
+  try {
+    if (!req.session.user) return res.sendStatus(401);
+
+    const user = await prisma.user.findUnique({
+      where: { user_id: req.session.user.user_id },
+      include: { profile: true }, // include UserProfile
+    });
+
+    if (!user) return res.status(404).json({ error: "User not found" });
+
+    res.json({
+      message: `Welcome ${user.email}`,
+      role: user.role,
+      user_id: user.user_id,
+      username: user.username,
+      profile: user.profile || null,
     });
   } catch (err) {
     console.error(err);
@@ -421,19 +573,7 @@ app.post("/login", async (req, res) => {
 });
 
 
-// ---- Unified /me route ----
-app.get("/me", (req, res) => {
-  if (req.session.user) {
-    const { id, email, name, role, accessToken, refreshToken } = req.session.user;
-    return res.json({ id, email, name, role, accessToken, refreshToken });
-  }
-  res.status(401).json({ error: "Not authenticated" });
-});
-
-
-
-
-// Logout
+// ======= Logout =======
 app.post("/logout", (req, res) => {
   req.session.destroy(err => {
     if (err) {
@@ -445,35 +585,26 @@ app.post("/logout", (req, res) => {
   });
 });
 
-// 5️⃣ Protected route example using session
-app.get("/profile", async (req, res) => {
-  try {
-    if (!req.session.user) return res.sendStatus(401);
-    const user = await User.findOne({ email: req.session.user.email });
-    if (!user) return res.status(404).json({ error: "User not found" });
-    res.json({ message: `Welcome ${user.email}`, role: user.role });
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: "Server error" });
-  }
-});
 
-// Refresh access token endpoint (uses stored refresh tokens)
+// ======= Refresh access token =======
 app.post("/token", async (req, res) => {
   try {
-    // read refresh token either from session (preferred) or request body
     const refreshToken = req.session?.user?.refreshToken || req.body.refreshToken;
     if (!refreshToken) return res.status(401).json({ error: "Refresh token required" });
 
-    const user = await User.findOne({ refreshToken });
+    const user = await prisma.user.findFirst({ where: { refresh_token: refreshToken } });
     if (!user) return res.status(403).json({ error: "Invalid refresh token" });
 
-    jwt.verify(refreshToken, process.env.JWT_REFRESH_SECRET || (process.env.JWT_SECRET || SECRET_KEY), (err, decoded) => {
+    jwt.verify(refreshToken, process.env.JWT_REFRESH_SECRET || process.env.JWT_SECRET, (err) => {
       if (err) return res.status(403).json({ error: "Invalid refresh token" });
-      const accessToken = jwt.sign({ email: user.email, role: user.role }, process.env.JWT_SECRET || SECRET_KEY, { expiresIn: "1h" });
 
-      // update session accessToken if exists
-      if (req.session && req.session.user) req.session.user.accessToken = accessToken;
+      const accessToken = jwt.sign(
+        { email: user.email, role: user.role },
+        process.env.JWT_SECRET,
+        { expiresIn: "1h" }
+      );
+
+      if (req.session?.user) req.session.user.accessToken = accessToken;
 
       res.json({ accessToken });
     });
@@ -483,25 +614,30 @@ app.post("/token", async (req, res) => {
   }
 });
 
-// Password reset token
+// ======= Request password reset =======
 app.post("/request-password-reset", async (req, res) => {
   try {
     const { email } = req.body;
-    const user = await User.findOne({ email });
+
+    const user = await prisma.user.findUnique({ where: { email } });
     if (!user) return res.status(400).json({ error: "User not found" });
 
     const token = Math.floor(100000 + Math.random() * 900000).toString();
-    const expires = new Date(Date.now() + 15 * 60 * 1000); // 15 min
+    const expires = new Date(Date.now() + 15 * 60 * 1000);
 
-    user.resetPasswordToken = token;
-    user.resetPasswordExpires = expires;
-    await user.save();
+    await prisma.user.update({
+      where: { email },
+      data: {
+        reset_password_token: token,
+        reset_password_expires: expires
+      }
+    });
 
     await transporter.sendMail({
       from: `"Bildare Auth" <${process.env.EMAIL_USER}>`,
       to: email,
       subject: "Password Reset Request",
-      text: `You requested a password reset. Use this token to reset your password: ${token}\nThis token expires in 15 minutes.`,
+      text: `Use this token to reset your password: ${token}\nExpires in 15 minutes.`,
     });
 
     res.json({ message: "Password reset token sent to email." });
@@ -511,16 +647,16 @@ app.post("/request-password-reset", async (req, res) => {
   }
 });
 
-// Verify Reset Token
+// ======= Verify reset token =======
 app.post("/verify-reset-token", async (req, res) => {
   try {
     const { email, token } = req.body;
     if (!email || !token) return res.status(400).json({ error: "Email and token are required" });
 
-    const user = await User.findOne({ email });
+    const user = await prisma.user.findUnique({ where: { email } });
     if (!user) return res.status(400).json({ error: "User not found" });
 
-    if (user.resetPasswordToken !== token || new Date() > user.resetPasswordExpires) {
+    if (!user.reset_password_token || user.reset_password_token !== token || new Date() > user.reset_password_expires) {
       return res.status(400).json({ error: "Invalid or expired token" });
     }
 
@@ -531,24 +667,29 @@ app.post("/verify-reset-token", async (req, res) => {
   }
 });
 
-// Reset Password
+// ======= Reset password =======
 app.post("/reset-password", async (req, res) => {
   try {
     const { email, token, newPassword } = req.body;
     if (!email || !token || !newPassword) return res.status(400).json({ error: "Email, token, and new password are required" });
 
-    const user = await User.findOne({ email });
+    const user = await prisma.user.findUnique({ where: { email } });
     if (!user) return res.status(400).json({ error: "User not found" });
 
-    if (user.resetPasswordToken !== token || new Date() > user.resetPasswordExpires) {
+    if (!user.reset_password_token || user.reset_password_token !== token || new Date() > user.reset_password_expires) {
       return res.status(400).json({ error: "Invalid or expired token" });
     }
 
-    // Update password
-    user.password = await bcrypt.hash(newPassword, 10);
-    user.resetPasswordToken = undefined;
-    user.resetPasswordExpires = undefined;
-    await user.save();
+    const hashedPassword = await bcrypt.hash(newPassword, 10);
+
+    await prisma.user.update({
+      where: { email },
+      data: {
+        password_hash: hashedPassword,
+        reset_password_token: null,
+        reset_password_expires: null
+      }
+    });
 
     res.json({ message: "Password reset successfully!" });
   } catch (err) {
@@ -557,56 +698,43 @@ app.post("/reset-password", async (req, res) => {
   }
 });
 
-// Fetch all users (PUBLIC, no authorization required)
+// ======= Fetch all users with profiles =======
 app.get("/users", async (req, res) => {
-  console.log("GET /users route hit"); // For debugging
   try {
-    const users = await User.find(
-      {},
-      "-password -otp -otpExpires -resetPasswordToken -refreshToken -__v"
-    );
+    const users = await prisma.user.findMany({
+      select: {
+        user_id: true,
+        email: true,
+        username: true,
+        role: true,
+        is_verified: true,
+        profile: true, // include the linked UserProfile
+      },
+    });
 
-    if (!users || users.length === 0) {
-      return res.json([]); // return empty array if no verified users
-    }
-
-    const formattedUsers = users.map(user => ({
-      id: user._id,
-      email: user.email,
-      name: user.name,
-      role: user.role,
-      verified: user.verified
-    }));
-
-    res.json(formattedUsers);
-
+    res.json(users);
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "Server error" });
   }
 });
 
-// Delete user by id
+// ======= Delete user =======
 app.delete("/users", async (req, res) => {
   try {
-    const { id } = req.body;
+    const { user_id } = req.body;
+    if (!user_id) return res.status(400).json({ error: "User ID is required" });
 
-    if (!id) {
-      return res.status(400).json({ error: "User ID is required in the request body" });
-    }
+    await prisma.user.delete({ where: { user_id } });
 
-    const user = await User.findByIdAndDelete(id);
-
-    if (!user) {
-      return res.status(404).json({ error: "User not found" });
-    }
-
-    res.json({ message: "User deleted successfully", id });
+    res.json({ message: "User deleted successfully", user_id });
   } catch (err) {
+    if (err.code === "P2025") return res.status(404).json({ error: "User not found" });
     console.error(err);
     res.status(500).json({ error: "Server error" });
   }
 });
+
 
 // Get all active logged-in users
 app.get("/active-users", (req, res) => {
@@ -618,14 +746,14 @@ app.get("/active-users", (req, res) => {
       return res.status(500).json({ error: "Could not fetch active users" });
     }
 
-    // Collect users from all sessions
     const users = [];
     for (const sid in sessions) {
       const session = sessions[sid];
       if (session.user) {
         users.push({
+          user_id: session.user.user_id, // align with your session structure
           email: session.user.email,
-          name: session.user.name,
+          username: session.user.username, // was `name` before
           role: session.user.role,
         });
       }
@@ -638,19 +766,36 @@ app.get("/active-users", (req, res) => {
   });
 });
 
+
 // Start Google login
 // ---- Google OAuth ----
 app.get("/auth/google", passport.authenticate("google", { scope: ["profile", "email"] }));
 
-app.get(
-  "/auth/google/callback",
+app.get("/auth/google/callback",
   passport.authenticate("google", { failureRedirect: "/auth", session: false }),
-  (req, res) => {
-    const { id, email, name, role, accessToken, refreshToken } = req.user;
+  async (req, res) => {
+    try {
+      const { user_id, email, username, role, accessToken, refreshToken } = req.user;
 
-    req.session.user = { id, email, name, role, accessToken, refreshToken };
+      // Fetch UserProfile (auto-created in strategy)
+      const profile = await prisma.userProfile.findUnique({ where: { user_id } });
 
-    res.redirect("https://bildare.vercel.app/");
+      // Normalize session
+      req.session.user = { 
+        user_id, 
+        email, 
+        username, 
+        role, 
+        accessToken, 
+        refreshToken,
+        profile_id: profile?.profile_id || null,
+      };
+
+      res.redirect("https://bildare.vercel.app/");
+    } catch (err) {
+      console.error("Google OAuth callback error:", err);
+      res.redirect("/auth");
+    }
   }
 );
 
@@ -658,19 +803,33 @@ app.get(
 app.get("/auth/github", passport.authenticate("github"));
 
 // GitHub callback
-app.get(
-  "/auth/github/callback",
+app.get("/auth/github/callback",
   passport.authenticate("github", { failureRedirect: "/auth", session: false }),
-  (req, res) => {
-    const { id, email, name, role, accessToken, refreshToken } = req.user;
+  async (req, res) => {
+    try {
+      const { user_id, email, username, role, accessToken, refreshToken } = req.user;
 
-    // Save to same session as normal login
-    req.session.user = { id, email, name, role, accessToken, refreshToken };
+      // Fetch UserProfile (auto-created in strategy)
+      const profile = await prisma.userProfile.findUnique({ where: { user_id } });
 
-    res.redirect("https://bildare.vercel.app/");
+      // Normalize session
+      req.session.user = { 
+        user_id, 
+        email, 
+        username, 
+        role, 
+        accessToken, 
+        refreshToken,
+        profile_id: profile?.profile_id || null,
+      };
+
+      res.redirect("https://bildare.vercel.app/");
+    } catch (err) {
+      console.error("GitHub OAuth callback error:", err);
+      res.redirect("/auth");
+    }
   }
 );
-
 
 
 
