@@ -293,40 +293,34 @@ app.post("/signup", async (req, res) => {
     const otp = Math.floor(100000 + Math.random() * 900000).toString();
     const otp_expires = new Date(Date.now() + 10 * 60 * 1000);
 
-    // Generate username
-    const baseUsername = email.split("@")[0];
-    const username = `${baseUsername}_${Math.floor(Math.random() * 10000)}`;
-
-    // Create user + empty profile
+    // Create user with bare-minimum data
     const user = await prisma.user.create({
       data: {
         email,
         password_hash: hashedPassword,
         otp,
         otp_expires,
-        username,           // <-- REQUIRED
         is_verified: false,
 
-        // Auto-create profile
-        profile: {
-          create: {}
-        }
+        interests: null,        // important
+        username: null,         // user chooses later
+
+        profile: { create: {} } // create empty profile
       }
     });
 
-    // Send OTP asynchronous
     sendOtpEmail(email, otp);
 
     res.json({
       message: "OTP sent to email. Please verify within 10 minutes.",
-      email,
-      username: user.username
+      email
     });
   } catch (err) {
     console.error("SIGNUP ERROR:", err);
     res.status(500).json({ error: "Server error" });
   }
 });
+
 
 
 // 🔁 Resend OTP
