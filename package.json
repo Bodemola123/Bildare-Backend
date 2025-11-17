@@ -2,11 +2,12 @@
   "name": "auth-backend",
   "version": "1.0.0",
   "main": "index.js",
-  "scripts": {
-    "start": "node index.js",
-    "dev": "nodemon index.js",
-    "postinstall": "npx prisma generate && npx prisma migrate deploy"
-  },
+"scripts": {
+  "start": "node index.js",
+  "dev": "nodemon index.js",
+  "postinstall": "npx --no-install prisma generate && npx --no-install prisma migrate deploy"
+}
+,
   "keywords": [],
   "author": "",
   "license": "ISC",
