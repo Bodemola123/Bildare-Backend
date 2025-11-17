@@ -319,6 +319,7 @@ app.post("/signup", async (req, res) => {
 
     res.json({
       message: "OTP sent to email. Please verify within 10 minutes.",
+      otp, 
       email,
       username: user.username
     });
