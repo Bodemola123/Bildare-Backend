@@ -284,6 +284,7 @@ app.post("/signup", async (req, res) => {
       return res.status(400).json({ error: "Email and password are required" });
     }
 
+    // Check if user already exists
     const existingUser = await prisma.user.findUnique({ where: { email } });
     if (existingUser) {
       return res.status(400).json({ error: "Email already registered" });
@@ -295,7 +296,11 @@ app.post("/signup", async (req, res) => {
     const otp = Math.floor(100000 + Math.random() * 900000).toString();
     const otp_expires = new Date(Date.now() + 10 * 60 * 1000); // 10 min
 
-    // Create user with bare-minimum data
+    // Generate username from email
+    const baseUsername = email.split("@")[0];
+    const username = `${baseUsername}_${Math.floor(Math.random() * 10000)}`;
+
+    // Create user
     const user = await prisma.user.create({
       data: {
         email,
@@ -303,9 +308,9 @@ app.post("/signup", async (req, res) => {
         otp,
         otp_expires,
         is_verified: false,
-        username: null,    // optional, user will set later
-        interests: null,   // optional, user will set later
-        profile: { create: {} } // create empty profile
+        username,          // auto-generated
+        interests: null,   // optional
+        profile: { create: {} } // empty profile
       }
     });
 
@@ -314,7 +319,8 @@ app.post("/signup", async (req, res) => {
 
     res.json({
       message: "OTP sent to email. Please verify within 10 minutes.",
-      email
+      email,
+      username: user.username
     });
 
   } catch (err) {
@@ -322,6 +328,7 @@ app.post("/signup", async (req, res) => {
     res.status(500).json({ error: "Server error" });
   }
 });
+
 
 
 
@@ -387,11 +394,12 @@ app.post("/complete-profile", async (req, res) => {
       return res.status(400).json({ error: "Email, username, and role are required" });
     }
 
+    // Find the user
     const user = await prisma.user.findUnique({ where: { email } });
     if (!user) return res.status(400).json({ error: "User not found" });
     if (!user.is_verified) return res.status(400).json({ error: "Email not verified" });
 
-    // Check if username is already taken by someone else
+    // Ensure the new username is not taken by someone else
     const existingUsername = await prisma.user.findUnique({ where: { username } });
     if (existingUsername && existingUsername.user_id !== user.user_id) {
       return res.status(400).json({ error: "Username already taken" });
@@ -403,14 +411,13 @@ app.post("/complete-profile", async (req, res) => {
       process.env.JWT_SECRET,
       { expiresIn: "1h" }
     );
-
     const refreshToken = jwt.sign(
       { email: user.email },
       process.env.JWT_REFRESH_SECRET,
       { expiresIn: "7d" }
     );
 
-    // Update user with profile info
+    // Update user fields
     const updatedUser = await prisma.user.update({
       where: { email },
       data: {
@@ -421,7 +428,7 @@ app.post("/complete-profile", async (req, res) => {
       },
     });
 
-    // Update or create associated UserProfile
+    // Create or update user profile
     let profile = await prisma.userProfile.findUnique({ where: { user_id: updatedUser.user_id } });
     if (!profile) {
       profile = await prisma.userProfile.create({
@@ -437,10 +444,10 @@ app.post("/complete-profile", async (req, res) => {
       profile = await prisma.userProfile.update({
         where: { user_id: updatedUser.user_id },
         data: {
-          first_name: first_name || profile.first_name,
-          last_name: last_name || profile.last_name,
-          bio: bio || profile.bio,
-          avatar_url: avatar_url || profile.avatar_url,
+          first_name: first_name ?? profile.first_name,
+          last_name: last_name ?? profile.last_name,
+          bio: bio ?? profile.bio,
+          avatar_url: avatar_url ?? profile.avatar_url,
         },
       });
     }
@@ -449,7 +456,7 @@ app.post("/complete-profile", async (req, res) => {
     req.session.user = {
       user_id: updatedUser.user_id,
       email: updatedUser.email,
-      username,
+      username: updatedUser.username,
       role,
       accessToken,
       refreshToken,
@@ -459,7 +466,7 @@ app.post("/complete-profile", async (req, res) => {
     res.json({
       message: "Profile completed successfully!",
       user_id: updatedUser.user_id,
-      username,
+      username: updatedUser.username,
       role,
       profile,
       accessToken,
@@ -471,6 +478,7 @@ app.post("/complete-profile", async (req, res) => {
     res.status(500).json({ error: "Server error" });
   }
 });
+
 
 
 
