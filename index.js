@@ -290,8 +290,10 @@ app.post("/signup", async (req, res) => {
     }
 
     const hashedPassword = await bcrypt.hash(password, 10);
+
+    // Generate OTP
     const otp = Math.floor(100000 + Math.random() * 900000).toString();
-    const otp_expires = new Date(Date.now() + 10 * 60 * 1000);
+    const otp_expires = new Date(Date.now() + 10 * 60 * 1000); // 10 min
 
     // Create user with bare-minimum data
     const user = await prisma.user.create({
@@ -301,25 +303,26 @@ app.post("/signup", async (req, res) => {
         otp,
         otp_expires,
         is_verified: false,
-
-        interests: null,        // important
-        username: null,         // user chooses later
-
+        username: null,    // optional, user will set later
+        interests: null,   // optional, user will set later
         profile: { create: {} } // create empty profile
       }
     });
 
+    // Send OTP asynchronously
     sendOtpEmail(email, otp);
 
     res.json({
       message: "OTP sent to email. Please verify within 10 minutes.",
       email
     });
+
   } catch (err) {
     console.error("SIGNUP ERROR:", err);
     res.status(500).json({ error: "Server error" });
   }
 });
+
 
 
 
@@ -388,7 +391,7 @@ app.post("/complete-profile", async (req, res) => {
     if (!user) return res.status(400).json({ error: "User not found" });
     if (!user.is_verified) return res.status(400).json({ error: "Email not verified" });
 
-    // Check if username is already taken
+    // Check if username is already taken by someone else
     const existingUsername = await prisma.user.findUnique({ where: { username } });
     if (existingUsername && existingUsername.user_id !== user.user_id) {
       return res.status(400).json({ error: "Username already taken" });
@@ -407,7 +410,7 @@ app.post("/complete-profile", async (req, res) => {
       { expiresIn: "7d" }
     );
 
-    // Update user with username, role, refresh token, and optional interests
+    // Update user with profile info
     const updatedUser = await prisma.user.update({
       where: { email },
       data: {
@@ -418,7 +421,7 @@ app.post("/complete-profile", async (req, res) => {
       },
     });
 
-    // Create associated UserProfile if it does not exist
+    // Update or create associated UserProfile
     let profile = await prisma.userProfile.findUnique({ where: { user_id: updatedUser.user_id } });
     if (!profile) {
       profile = await prisma.userProfile.create({
@@ -428,6 +431,16 @@ app.post("/complete-profile", async (req, res) => {
           last_name: last_name || null,
           bio: bio || null,
           avatar_url: avatar_url || null,
+        },
+      });
+    } else {
+      profile = await prisma.userProfile.update({
+        where: { user_id: updatedUser.user_id },
+        data: {
+          first_name: first_name || profile.first_name,
+          last_name: last_name || profile.last_name,
+          bio: bio || profile.bio,
+          avatar_url: avatar_url || profile.avatar_url,
         },
       });
     }
@@ -454,10 +467,11 @@ app.post("/complete-profile", async (req, res) => {
     });
 
   } catch (err) {
-    console.error(err);
+    console.error("COMPLETE PROFILE ERROR:", err);
     res.status(500).json({ error: "Server error" });
   }
 });
+
 
 
 // 4️⃣ Login

@@ -2,12 +2,10 @@
   "name": "auth-backend",
   "version": "1.0.0",
   "main": "index.js",
-"scripts": {
-  "start": "node index.js",
-  "dev": "nodemon index.js",
-  "postinstall": "npx --no-install prisma generate && npx --no-install prisma migrate deploy"
-}
-,
+  "scripts": {
+    "start": "node index.js",
+    "dev": "nodemon index.js"
+  },
   "keywords": [],
   "author": "",
   "license": "ISC",
@@ -29,10 +27,11 @@
     "passport": "^0.7.0",
     "passport-github2": "^0.1.12",
     "passport-google-oauth20": "^2.0.0",
-    "pg": "^8.16.3",
-    "prisma": "^6.19.0"
+    "pg": "^8.16.3"
   },
   "devDependencies": {
-    "nodemon": "^3.0.2"
+    "install": "^0.13.0",
+    "npm": "^11.6.2",
+    "prisma": "^6.19.0"
   }
 }
