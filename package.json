@@ -5,7 +5,7 @@
   "scripts": {
     "start": "node index.js",
     "dev": "nodemon index.js",
-    "prisma:deploy": "npx prisma migrate deploy"
+    "postinstall": "npx prisma generate && npx prisma migrate deploy"
   },
   "keywords": [],
   "author": "",
@@ -32,7 +32,6 @@
     "prisma": "^6.19.0"
   },
   "devDependencies": {
-    "install": "^0.13.0",
-    "npm": "^11.6.2"
+    "nodemon": "^3.0.2"
   }
 }
