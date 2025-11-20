@@ -56,6 +56,7 @@ app.use(session({
     // supply connection string (or a pool) for connect-pg-simple
     conString: process.env.DATABASE_URL,
     tableName: "session",
+    schemaName: "auth",
   }),
   cookie: {
     httpOnly: true,
@@ -344,18 +345,42 @@ app.post("/resend-otp", async (req, res) => {
     if (!user) return res.status(400).json({ error: "User not found" });
     if (user.is_verified) return res.status(400).json({ error: "Already verified" });
 
+    const today = new Date().toISOString().split("T")[0];
+    const lastRequestDay = user.otp_request_date?.toISOString().split("T")[0];
+
+    // Reset counter if new day
+    let requestCount = user.otp_request_count;
+    if (today !== lastRequestDay) requestCount = 0;
+
+    if (requestCount >= 5) {
+      return res.status(429).json({
+        error: "Maximum OTP requests reached. Try again tomorrow.",
+      });
+    }
+
+    // Generate OTP
     const otp = Math.floor(100000 + Math.random() * 900000).toString();
     const otp_expires = new Date(Date.now() + 10 * 60 * 1000);
 
-    await prisma.user.update({ where: { email }, data: { otp, otp_expires } });
+    await prisma.user.update({
+      where: { email },
+      data: {
+        otp,
+        otp_expires,
+        otp_request_count: requestCount + 1,
+        otp_request_date: new Date(),
+      },
+    });
 
     sendOtpEmail(email, otp);
+
     res.json({ message: "New OTP sent to email." });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "Server error" });
   }
 });
+
 
 // 2️⃣ Verify OTP
 app.post("/verify-otp", async (req, res) => {
@@ -652,6 +677,18 @@ app.post("/request-password-reset", async (req, res) => {
     const user = await prisma.user.findUnique({ where: { email } });
     if (!user) return res.status(400).json({ error: "User not found" });
 
+    const today = new Date().toISOString().split("T")[0];
+    const lastRequestDay = user.otp_request_date?.toISOString().split("T")[0];
+
+    let requestCount = user.otp_request_count;
+    if (today !== lastRequestDay) requestCount = 0;
+
+    if (requestCount >= 5) {
+      return res.status(429).json({
+        error: "Maximum password reset requests reached. Try again tomorrow.",
+      });
+    }
+
     const token = Math.floor(100000 + Math.random() * 900000).toString();
     const expires = new Date(Date.now() + 15 * 60 * 1000);
 
@@ -659,8 +696,10 @@ app.post("/request-password-reset", async (req, res) => {
       where: { email },
       data: {
         reset_password_token: token,
-        reset_password_expires: expires
-      }
+        reset_password_expires: expires,
+        otp_request_count: requestCount + 1,
+        otp_request_date: new Date(),
+      },
     });
 
     await transporter.sendMail({
@@ -676,6 +715,7 @@ app.post("/request-password-reset", async (req, res) => {
     res.status(500).json({ error: "Server error" });
   }
 });
+
 
 // ======= Verify reset token =======
 app.post("/verify-reset-token", async (req, res) => {
