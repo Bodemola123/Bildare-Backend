@@ -297,32 +297,69 @@ app.post("/signup", async (req, res) => {
 
     // Generate OTP
     const otp = Math.floor(100000 + Math.random() * 900000).toString();
-    const otp_expires = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes
+    const otp_expires = new Date(Date.now() + 10 * 60 * 1000); // 10 min
 
     // Generate username from email
     const baseUsername = email.split("@")[0];
     const username = `${baseUsername}_${Math.floor(Math.random() * 10000)}`;
 
-    // Save or update pending user
-    await prisma.pendingUser.upsert({
-      where: { email },
-      update: { otp, otp_expires, password_hash: hashedPassword, username },
-      create: { email, password_hash: hashedPassword, otp, otp_expires, username }
-    });
+    // Check if PendingUser exists
+    const pending = await prisma.pendingUser.findUnique({ where: { email } });
+
+    const now = new Date();
+    let requestCount = 1;
+
+    if (pending) {
+      // Reset request count if last request was a different day
+      if (pending.otp_request_date && pending.otp_request_date.toDateString() === now.toDateString()) {
+        requestCount = pending.otp_request_count + 1;
+      }
+
+      if (requestCount > 5) {
+        return res.status(429).json({ error: "Maximum OTP requests reached. Try again tomorrow." });
+      }
+
+      // Update existing pending user
+      await prisma.pendingUser.update({
+        where: { email },
+        data: {
+          otp,
+          otp_expires,
+          password_hash: hashedPassword,
+          username,
+          otp_request_count: requestCount,
+          otp_request_date: now
+        }
+      });
+    } else {
+      // Create new pending user
+      await prisma.pendingUser.create({
+        data: {
+          email,
+          password_hash: hashedPassword,
+          otp,
+          otp_expires,
+          username,
+          otp_request_count: 1,
+          otp_request_date: now
+        }
+      });
+    }
 
     await sendOtpEmail(email, otp);
 
     res.json({
-      message: "OTP sent to email. Please verify within 10 minutes.",
-      otp,
+      message: "OTP sent. Verify within 10 minutes.",
       email,
       username
     });
+
   } catch (err) {
     console.error("SIGNUP ERROR:", err);
     res.status(500).json({ error: "Server error" });
   }
 });
+
 
 
 
@@ -332,62 +369,55 @@ app.post("/resend-otp", async (req, res) => {
     const { email } = req.body;
     if (!email) return res.status(400).json({ error: "Email is required" });
 
-    // Find pending signup
     const pending = await prisma.pendingUser.findUnique({ where: { email } });
-    if (!pending) return res.status(400).json({ error: "No pending signup found for this email" });
+    if (!pending) return res.status(400).json({ error: "No pending signup found" });
 
-    // Reset request count if last request is not today
-    const lastRequestDate = pending.otp_request_date;
     const now = new Date();
-
     let requestCount = pending.otp_request_count || 0;
-    if (!lastRequestDate || lastRequestDate.toDateString() !== now.toDateString()) {
-      requestCount = 0; // reset count for new day
+
+    if (!pending.otp_request_date || pending.otp_request_date.toDateString() !== now.toDateString()) {
+      requestCount = 0; // reset for new day
     }
 
     if (requestCount >= 5) {
-      return res.status(429).json({
-        error: "Maximum OTP requests reached. Try again tomorrow.",
-      });
+      return res.status(429).json({ error: "Maximum OTP requests reached. Try again tomorrow." });
     }
 
-    // Generate new OTP
     const otp = Math.floor(100000 + Math.random() * 900000).toString();
-    const otp_expires = new Date(now.getTime() + 10 * 60 * 1000); // 10 minutes
+    const otp_expires = new Date(now.getTime() + 10 * 60 * 1000);
 
-    // Update pending user
     await prisma.pendingUser.update({
       where: { email },
       data: {
         otp,
         otp_expires,
         otp_request_count: requestCount + 1,
-        otp_request_date: now,
-      },
+        otp_request_date: now
+      }
     });
 
     await sendOtpEmail(email, otp);
 
     res.json({ message: "New OTP sent to email." });
+
   } catch (err) {
     console.error("RESEND OTP ERROR:", err);
     res.status(500).json({ error: "Server error" });
   }
 });
 
+
 // 2️⃣ Verify OTP
 app.post("/verify-otp", async (req, res) => {
   try {
     const { email, otp } = req.body;
-    if (!email || !otp)
-      return res.status(400).json({ error: "Email and OTP are required" });
+    if (!email || !otp) return res.status(400).json({ error: "Email and OTP are required" });
 
     const pending = await prisma.pendingUser.findUnique({ where: { email } });
     if (!pending) return res.status(400).json({ error: "No pending signup found" });
 
     if (pending.otp !== otp) return res.status(400).json({ error: "Invalid OTP" });
-    if (new Date() > pending.otp_expires)
-      return res.status(400).json({ error: "OTP expired. Request a new one." });
+    if (new Date() > pending.otp_expires) return res.status(400).json({ error: "OTP expired. Request a new one." });
 
     // Create user in main User table
     const user = await prisma.user.create({
@@ -408,11 +438,13 @@ app.post("/verify-otp", async (req, res) => {
       email: user.email,
       username: user.username
     });
+
   } catch (err) {
     console.error("VERIFY OTP ERROR:", err);
     res.status(500).json({ error: "Server error" });
   }
 });
+
 
 
 
@@ -433,19 +465,20 @@ app.post("/complete-profile", async (req, res) => {
       referralCode
     } = req.body;
 
-    if (!email || !username || !role)
+    if (!email || !username || !role) {
       return res.status(400).json({ error: "Email, username, and role are required" });
+    }
 
-    // Find existing user
-    const existingUser = await prisma.user.findUnique({ where: { email } });
-    if (!existingUser) return res.status(400).json({ error: "User not found. Please signup first." });
+    const user = await prisma.user.findUnique({ where: { email } });
+    if (!user) return res.status(400).json({ error: "User not found. Please verify OTP first." });
 
-    // Check username uniqueness
+    // Check if username is taken by another user
     const usernameTaken = await prisma.user.findUnique({ where: { username } });
-    if (usernameTaken && usernameTaken.user_id !== existingUser.user_id)
+    if (usernameTaken && usernameTaken.user_id !== user.user_id) {
       return res.status(400).json({ error: "Username already taken" });
+    }
 
-    // Handle referral code
+    // Handle referral
     let referredByUserId = null;
     if (referralCode) {
       const refRecord = await prisma.referralCode.findUnique({ where: { code: referralCode } });
@@ -458,7 +491,7 @@ app.post("/complete-profile", async (req, res) => {
 
     // Update user and create profile
     const updatedUser = await prisma.user.update({
-      where: { user_id: existingUser.user_id },
+      where: { user_id: user.user_id },
       data: {
         username,
         role,
@@ -479,9 +512,11 @@ app.post("/complete-profile", async (req, res) => {
     });
 
     // Save referral code
-    await prisma.referralCode.create({ data: { code: myReferralCode, user_id: updatedUser.user_id } });
+    await prisma.referralCode.create({
+      data: { code: myReferralCode, user_id: updatedUser.user_id }
+    });
 
-    // JWT tokens
+    // Generate JWT
     const accessToken = jwt.sign({ email: updatedUser.email, role: updatedUser.role }, process.env.JWT_SECRET, { expiresIn: "1h" });
     const refreshToken = jwt.sign({ email: updatedUser.email }, process.env.JWT_REFRESH_SECRET, { expiresIn: "7d" });
 
@@ -513,6 +548,7 @@ app.post("/complete-profile", async (req, res) => {
     res.status(500).json({ error: "Server error" });
   }
 });
+
 
 
 
