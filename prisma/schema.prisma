@@ -72,19 +72,6 @@ model UserProfile {
   user User @relation(fields: [user_id], references: [user_id], onDelete: Cascade)
 }
 
-model PendingUser {
-  id                Int      @id @default(autoincrement())
-  email             String   @unique
-  password_hash     String
-  otp               String
-  otp_expires       DateTime
-  username          String
-  created_at        DateTime @default(now())
-
-  otp_request_count Int?     @default(0)
-  otp_request_date  DateTime?
-}
-
 
 
 
