@@ -347,7 +347,7 @@ app.post("/signup", async (req, res) => {
       });
     }
 
-    await sendOtpEmail("emolabodunrin@gmail.com", otp);
+    await sendOtpEmail(email, otp);
 
     res.json({
       message: "OTP sent to email. Please verify within 10 minutes.",
