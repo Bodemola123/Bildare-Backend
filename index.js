@@ -317,13 +317,7 @@ app.post("/signup", async (req, res) => {
       }
     });
 
-try {
-  console.log("Sending OTP to:", email, "OTP:", otp);
-  await sendOtpEmail(email, otp); // now waits for Nodemailer to complete
-  console.log("✅ OTP email attempted to send");
-} catch (err) {
-  console.error("❌ OTP email failed inside signup:", err);
-}
+ sendOtpEmail(email, otp); // now waits for Nodemailer to complete
 
 
 
