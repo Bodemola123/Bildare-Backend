@@ -311,7 +311,7 @@ app.post("/signup", async (req, res) => {
         is_verified: false,
         username,          // auto-generated
         interests: null,   // optional
-        profile: { create: {} } // empty profile
+        
       }
     });
 
@@ -330,9 +330,6 @@ app.post("/signup", async (req, res) => {
     res.status(500).json({ error: "Server error" });
   }
 });
-
-
-
 
 
 // 🔁 Resend OTP
@@ -414,89 +411,117 @@ app.post("/verify-otp", async (req, res) => {
 // Verify OTP then complete profile
 app.post("/complete-profile", async (req, res) => {
   try {
-    const { email, username, role, first_name, last_name, bio, avatar_url, interests } = req.body;
+    const {
+      email,
+      password,          // required
+      username,
+      role,
+      first_name,
+      last_name,
+      bio,
+      avatar_url,
+      interests,
+      social_links,
+      referralCode
+    } = req.body;
 
-    if (!email || !username || !role) {
-      return res.status(400).json({ error: "Email, username, and role are required" });
+    if (!email || !password || !username || !role) {
+      return res.status(400).json({ error: "Email, password, username, and role are required" });
     }
 
-    // Find the user
-    const user = await prisma.user.findUnique({ where: { email } });
-    if (!user) return res.status(400).json({ error: "User not found" });
-    if (!user.is_verified) return res.status(400).json({ error: "Email not verified" });
+    // Find existing user (from signup) who may not have completed profile yet
+    let existingUser = await prisma.user.findUnique({ where: { email } });
 
-    // Ensure the new username is not taken by someone else
-    const existingUsername = await prisma.user.findUnique({ where: { username } });
-    if (existingUsername && existingUsername.user_id !== user.user_id) {
+    if (!existingUser) {
+      return res.status(400).json({ error: "User not found. Please signup first." });
+    }
+
+    if (existingUser.is_verified === false) {
+      return res.status(400).json({ error: "Please verify OTP before completing profile." });
+    }
+
+    // Check if username is already taken by another user
+    const usernameTaken = await prisma.user.findUnique({ where: { username } });
+    if (usernameTaken && usernameTaken.user_id !== existingUser.user_id) {
       return res.status(400).json({ error: "Username already taken" });
     }
 
-    // Generate JWT tokens
-    const accessToken = jwt.sign(
-      { email: user.email, role },
-      process.env.JWT_SECRET,
-      { expiresIn: "1h" }
-    );
-    const refreshToken = jwt.sign(
-      { email: user.email },
-      process.env.JWT_REFRESH_SECRET,
-      { expiresIn: "7d" }
-    );
+    // Handle referral code
+    let referredByUserId = null;
+    if (referralCode) {
+      const refRecord = await prisma.referralCode.findUnique({ where: { code: referralCode } });
+      if (!refRecord) return res.status(400).json({ error: "Invalid referral code" });
+      referredByUserId = refRecord.user_id;
+    }
 
-    // Update user fields
+    // Hash password
+    const hashedPassword = await bcrypt.hash(password, 10);
+
+    // Generate this user's referral code
+    const myReferralCode = `${username.slice(0, 4).toUpperCase()}${Math.floor(1000 + Math.random() * 9000)}`;
+
+    // Update user and create profile atomically
     const updatedUser = await prisma.user.update({
-      where: { email },
+      where: { user_id: existingUser.user_id },
       data: {
         username,
         role,
-        refresh_token: refreshToken,
+        password_hash: hashedPassword,
         interests: interests || null,
+        referred_by: referredByUserId,
+        referralCode: myReferralCode,
+        profile: {
+          create: {
+            first_name,
+            last_name,
+            bio,
+            avatar_url,
+            social_links: social_links || null
+          }
+        }
       },
+      include: { profile: true }
     });
 
-    // Create or update user profile
-    let profile = await prisma.userProfile.findUnique({ where: { user_id: updatedUser.user_id } });
-    if (!profile) {
-      profile = await prisma.userProfile.create({
-        data: {
-          user_id: updatedUser.user_id,
-          first_name: first_name || null,
-          last_name: last_name || null,
-          bio: bio || null,
-          avatar_url: avatar_url || null,
-        },
-      });
-    } else {
-      profile = await prisma.userProfile.update({
-        where: { user_id: updatedUser.user_id },
-        data: {
-          first_name: first_name ?? profile.first_name,
-          last_name: last_name ?? profile.last_name,
-          bio: bio ?? profile.bio,
-          avatar_url: avatar_url ?? profile.avatar_url,
-        },
-      });
-    }
+    // Save referral code in ReferralCode model
+    await prisma.referralCode.create({
+      data: { code: myReferralCode, user_id: updatedUser.user_id }
+    });
+
+    // Generate JWT tokens
+    const accessToken = jwt.sign(
+      { email: updatedUser.email, role: updatedUser.role },
+      process.env.JWT_SECRET,
+      { expiresIn: "1h" }
+    );
+
+    const refreshToken = jwt.sign(
+      { email: updatedUser.email },
+      process.env.JWT_REFRESH_SECRET,
+      { expiresIn: "7d" }
+    );
 
     // Save session
     req.session.user = {
       user_id: updatedUser.user_id,
       email: updatedUser.email,
       username: updatedUser.username,
-      role,
+      role: updatedUser.role,
       accessToken,
       refreshToken,
-      profile_id: profile.profile_id,
+      profile_id: updatedUser.profile.profile_id,
+      referralCode: myReferralCode
     };
 
     res.json({
       message: "Profile completed successfully!",
       user_id: updatedUser.user_id,
       username: updatedUser.username,
-      role,
-      profile,
+      role: updatedUser.role,
+      referralCode: myReferralCode,
+      profile: updatedUser.profile,
       accessToken,
-      refreshToken,
+      refreshToken
     });
 
   } catch (err) {
@@ -513,14 +538,12 @@ app.post("/complete-profile", async (req, res) => {
 app.post("/login", async (req, res) => {
   try {
     const { email, password } = req.body;
-    if (!email || !password) {
-      return res.status(400).json({ error: "Email and password required" });
-    }
+    if (!email || !password) return res.status(400).json({ error: "Email and password required" });
 
-    // Find user including profile
+    // Fetch user including profile
     const user = await prisma.user.findUnique({
       where: { email },
-      include: { profile: true }, // include userProfile
+      include: { profile: true },
     });
 
     if (!user) return res.status(400).json({ error: "User not found" });
@@ -535,7 +558,6 @@ app.post("/login", async (req, res) => {
       process.env.JWT_SECRET,
       { expiresIn: "1h" }
     );
-
     const refreshToken = jwt.sign(
       { email: user.email },
       process.env.JWT_REFRESH_SECRET,
@@ -549,7 +571,7 @@ app.post("/login", async (req, res) => {
       include: { profile: true },
     });
 
-    // Save session
+    // Save session including referral code
     req.session.user = {
       user_id: updatedUser.user_id,
       email: updatedUser.email,
@@ -558,6 +580,8 @@ app.post("/login", async (req, res) => {
       accessToken,
       refreshToken,
       profile_id: updatedUser.profile?.profile_id,
+      referralCode: updatedUser.referralCode || null, // 👈 added
+      referred_by: updatedUser.referred_by || null,   // 👈 added
     };
 
     res.json({
@@ -565,15 +589,19 @@ app.post("/login", async (req, res) => {
       user_id: updatedUser.user_id,
       username: updatedUser.username,
       role: updatedUser.role,
+      referralCode: updatedUser.referralCode || null, // 👈 added
+      referred_by: updatedUser.referred_by || null,   // 👈 added
       profile: updatedUser.profile || null,
       accessToken,
       refreshToken,
     });
+
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "Server error" });
   }
 });
+
 
 // ======= /me =======
 app.get("/me", async (req, res) => {
@@ -582,7 +610,10 @@ app.get("/me", async (req, res) => {
 
     const user = await prisma.user.findUnique({
       where: { user_id: req.session.user.user_id },
-      include: { profile: true }, // include UserProfile
+      include: {
+        profile: true,
+        referredBy: { select: { user_id: true, username: true, email: true } }, // full referrer info
+      },
     });
 
     if (!user) return res.status(404).json({ error: "User not found" });
@@ -592,15 +623,21 @@ app.get("/me", async (req, res) => {
       email: user.email,
       username: user.username,
       role: user.role,
+      referralCode: user.referralCode || null,    // 👈 added
+      referred_by: user.referred_by || null,      // 👈 added
+      referredBy: user.referredBy || null,        // 👈 added full object
       accessToken: req.session.user.accessToken,
       refreshToken: req.session.user.refreshToken,
       profile: user.profile || null,
     });
+
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "Server error" });
   }
 });
+
+
 
 // ======= Protected profile =======
 app.get("/profile", async (req, res) => {
@@ -778,7 +815,9 @@ app.get("/users", async (req, res) => {
         username: true,
         role: true,
         is_verified: true,
-        profile: true, // include the linked UserProfile
+        referralCode: true,  // 👈 added
+        referred_by: true,   // 👈 added
+        profile: true,
       },
     });
 
@@ -788,6 +827,8 @@ app.get("/users", async (req, res) => {
     res.status(500).json({ error: "Server error" });
   }
 });
+
+
 
 // ======= Delete user =======
 app.delete("/users", async (req, res) => {

@@ -343,3 +343,4 @@ model Share {
   user     User     @relation(fields: [user_id], references: [user_id])
   template Template @relation(fields: [template_id], references: [template_id])
 }
+
