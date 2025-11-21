@@ -113,6 +113,8 @@ const sendOtpEmail = async (email, otp) => {
     `,
     });
     console.log("✅ OTP email sent to", email);
+    console.log("Sending OTP to:", email, "OTP:", otp);
+
   } catch (err) {
     console.error("❌ Failed to send OTP email:", err.message || err);
     // don't throw — signup should still continue; frontend can show notice
@@ -315,8 +317,15 @@ app.post("/signup", async (req, res) => {
       }
     });
 
-    // Send OTP asynchronously
-    sendOtpEmail(email, otp);
+try {
+  console.log("Sending OTP to:", email, "OTP:", otp);
+  await sendOtpEmail(email, otp); // now waits for Nodemailer to complete
+  console.log("✅ OTP email attempted to send");
+} catch (err) {
+  console.error("❌ OTP email failed inside signup:", err);
+}
+
+
 
     res.json({
       message: "OTP sent to email. Please verify within 10 minutes.",
