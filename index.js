@@ -297,68 +297,33 @@ app.post("/signup", async (req, res) => {
 
     // Generate OTP
     const otp = Math.floor(100000 + Math.random() * 900000).toString();
-    const otp_expires = new Date(Date.now() + 10 * 60 * 1000); //  10 minutes
+    const otp_expires = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes
 
     // Generate username from email
     const baseUsername = email.split("@")[0];
     const username = `${baseUsername}_${Math.floor(Math.random() * 10000)}`;
 
-    const now = new Date();
-
     // Save or update pending user
-    const pending = await prisma.pendingUser.findUnique({ where: { email } });
-
-    if (pending) {
-      // Reset request count if last request was not today
-      let requestCount = pending.otp_request_count || 0;
-      if (!pending.otp_request_date || pending.otp_request_date.toDateString() !== now.toDateString()) {
-        requestCount = 0;
-      }
-
-      if (requestCount >= 5) {
-        return res.status(429).json({
-          error: "Maximum OTP requests reached. Try again tomorrow.",
-        });
-      }
-
-      await prisma.pendingUser.update({
-        where: { email },
-        data: {
-          otp,
-          otp_expires,
-          password_hash: hashedPassword,
-          username,
-          otp_request_count: requestCount + 1,
-          otp_request_date: now,
-        },
-      });
-    } else {
-      // Create new pending user
-      await prisma.pendingUser.create({
-        data: {
-          email,
-          password_hash: hashedPassword,
-          otp,
-          otp_expires,
-          username,
-          otp_request_count: 1,
-          otp_request_date: now,
-        },
-      });
-    }
+    await prisma.pendingUser.upsert({
+      where: { email },
+      update: { otp, otp_expires, password_hash: hashedPassword, username },
+      create: { email, password_hash: hashedPassword, otp, otp_expires, username }
+    });
 
     await sendOtpEmail(email, otp);
 
     res.json({
       message: "OTP sent to email. Please verify within 10 minutes.",
+      otp,
       email,
-      username,
+      username
     });
   } catch (err) {
     console.error("SIGNUP ERROR:", err);
     res.status(500).json({ error: "Server error" });
   }
 });
+
 
 
 // 🔁 Resend OTP
