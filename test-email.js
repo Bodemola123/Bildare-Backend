@@ -20,7 +20,7 @@ transporter.verify((error, success) => {
     // Optional: send a test email
     transporter.sendMail({
       from: `"Test Mail" <${process.env.EMAIL_USER}>`,
-      to: "emolabodunrin@gmail.com", // replace with your email
+      to: "emolabenjamin123@gmail.com", // replace with your email
       subject: "Test OTP Email",
       text: "Hello! This is a test email from Nodemailer using App Password.",
       html: "<b>Hello! This is a test email from Nodemailer using App Password.</b>",
