@@ -297,7 +297,7 @@ app.post("/signup", async (req, res) => {
 
     // Generate OTP
     const otp = Math.floor(100000 + Math.random() * 900000).toString();
-    const otp_expires = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes
+    const otp_expires = new Date(Date.now() + 10 * 60 * 1000); //  10 minutes
 
     // Generate username from email
     const baseUsername = email.split("@")[0];
