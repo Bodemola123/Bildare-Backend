@@ -1,19 +1,12 @@
 // server-setup.js (or paste at top of your existing index.js before routes)
 
 // core
-
 const express = require("express");
 const bcrypt = require("bcrypt");
 const jwt = require("jsonwebtoken");
 const cors = require("cors");
 const nodemailer = require("nodemailer");
-const { Resend } = require("resend");
 require("dotenv").config();
-
-
-
-
-const resend = new Resend(process.env.RESEND_API_KEY);
 
 // Prisma
 const { PrismaClient } = require("@prisma/client");
@@ -30,7 +23,6 @@ const GoogleStrategy = require("passport-google-oauth20").Strategy;
 const GitHubStrategy = require("passport-github2").Strategy;
 
 const crypto = require("crypto");
-
 
 const app = express();
 app.use(express.json());
@@ -92,40 +84,38 @@ const REFRESH_SECRET = process.env.JWT_REFRESH_SECRET || process.env.JWT_SECRET 
 // Nodemailer transporter
 const transporter = nodemailer.createTransport({
   host: "smtp.gmail.com",
-  port: 465,
-  secure: true, // SSL
+  port: 587,
+  secure: false, // use STARTTLS
   auth: {
     user: process.env.EMAIL_USER,
     pass: process.env.EMAIL_PASS,
   },
 });
 
-
 // Helper function: send OTP email (safe - catches errors)
 const sendOtpEmail = async (email, otp) => {
   try {
-    await resend.emails.send({
-      from: "teambildare@gmail.com",
+    await transporter.sendMail({
+      from: `"Bildare Auth" <${process.env.EMAIL_USER}>`,
       to: email,
       subject: "🔐 Your Bildare Verification Code",
       text: `Hello,\n\nYour One-Time Password (OTP) is: ${otp}\n\nPlease use this code to verify your email. It will expire in 10 minutes.\n\nThank you,\nThe Bildare Team`,
       html: `
-        <div style="font-family: Arial, sans-serif; line-height:1.5; color:#333;">
-          <h2>Welcome to <span style="color:#ff510d;">Bildare</span> 🎉</h2>
-          <p>We are excited to have you on board! To complete your sign up, please verify your email using the OTP below:</p>
-          <div style="margin:20px 0; padding:15px; background:#f4f4f4; border-radius:8px; text-align:center;">
-            <h1 style="color:#182a4e; letter-spacing:5px;">${otp}</h1>
-          </div>
-          <p>This code will expire in <b>10 minutes</b>. If you did not request this, please ignore this email.</p>
-          <p style="margin-top:30px;">Cheers,<br><b>The Bildare Team</b></p>
+      <div style="font-family: Arial, sans-serif; line-height:1.5; color:#333;">
+        <h2>Welcome to <span style="color:#ff510d;">Bildare</span> 🎉</h2>
+        <p>We are excited to have you on board! To complete your sign up, please verify your email using the OTP below:</p>
+        <div style="margin:20px 0; padding:15px; background:#f4f4f4; border-radius:8px; text-align:center;">
+          <h1 style="color:#182a4e; letter-spacing:5px;">${otp}</h1>
         </div>
-      `,
+        <p>This code will expire in <b>10 minutes</b>. If you did not request this, please ignore this email.</p>
+        <p style="margin-top:30px;">Cheers,<br><b>The Bildare Team</b></p>
+      </div>
+    `,
     });
-
     console.log("✅ OTP email sent to", email);
   } catch (err) {
     console.error("❌ Failed to send OTP email:", err.message || err);
-    // Don't throw — signup/resend should continue
+    // don't throw — signup should still continue; frontend can show notice
   }
 };
 
@@ -326,6 +316,31 @@ app.post("/signup", async (req, res) => {
     });
 
     // Send OTP asynchronously
+    const sendOtpEmail = async (email, otp) => {
+  try {
+    await transporter.sendMail({
+      from: `"Bildare Auth" <${process.env.EMAIL_USER}>`,
+      to: email,
+      subject: "🔐 Your Bildare Verification Code",
+      text: `Hello,\n\nYour One-Time Password (OTP) is: ${otp}\n\nPlease use this code to verify your email. It will expire in 10 minutes.\n\nThank you,\nThe Bildare Team`,
+      html: `
+      <div style="font-family: Arial, sans-serif; line-height:1.5; color:#333;">
+        <h2>Welcome to <span style="color:#ff510d;">Bildare</span> 🎉</h2>
+        <p>We are excited to have you on board! To complete your sign up, please verify your email using the OTP below:</p>
+        <div style="margin:20px 0; padding:15px; background:#f4f4f4; border-radius:8px; text-align:center;">
+          <h1 style="color:#182a4e; letter-spacing:5px;">${otp}</h1>
+        </div>
+        <p>This code will expire in <b>10 minutes</b>. If you did not request this, please ignore this email.</p>
+        <p style="margin-top:30px;">Cheers,<br><b>The Bildare Team</b></p>
+      </div>
+    `,
+    });
+    console.log("✅ OTP email sent to", email);
+  } catch (err) {
+    console.error("❌ Failed to send OTP email:", err.message || err);
+    // don't throw — signup should still continue; frontend can show notice
+  }
+};
 
   sendOtpEmail(email, otp);
 
@@ -964,8 +979,12 @@ app.post("/contact", async (req, res) => {
       return res.status(400).json({ error: "All fields are required." });
     }
 
-    // Compose HTML content
-    const htmlContent = `
+    // Compose email content
+    const mailOptions = {
+      from: `"Bildare Website Contact" <${process.env.EMAIL_USER}>`,
+      to: "bildare.auth@gmail.com",
+      subject: `📩 New Contact Form Submission: ${subject}`,
+      html: `
       <div style="margin:0; padding:0; font-family: 'Helvetica', Arial, sans-serif; background-color:#f4f4f4;">
         <table width="100%" cellpadding="0" cellspacing="0" style="max-width:600px; margin:auto; background:#ffffff; border-radius:12px; overflow:hidden; box-shadow:0 0 10px rgba(0,0,0,0.1);">
           <tr>
@@ -991,21 +1010,10 @@ app.post("/contact", async (req, res) => {
           </tr>
         </table>
       </div>
-    `;
+      `,
+    };
 
-    // Send email via Resend
-    await resend.emails.send({
-      from: 'Contact Form <teambuildare@gmail.com>',
-      to: 'teambuildare@gmail.com',
-      subject: `📩 New Contact Form Submission: ${subject}`,
-      html: htmlContent,
-      text: `
-        Name: ${name}
-        Email: ${email}
-        Subject: ${subject}
-        Message: ${message}
-      `, // fallback plain text
-    });
+    await transporter.sendMail(mailOptions);
 
     res.json({ message: "Your message has been sent successfully!" });
   } catch (err) {
@@ -1013,6 +1021,7 @@ app.post("/contact", async (req, res) => {
     res.status(500).json({ error: "Failed to send message." });
   }
 });
+
 
 // Root route (for testing)
 app.get("/", (req, res) => {
