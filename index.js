@@ -1,7 +1,7 @@
 // server-setup.js (or paste at top of your existing index.js before routes)
 
 // core
-import { Resend } from 'resend';
+
 const express = require("express");
 const bcrypt = require("bcrypt");
 const jwt = require("jsonwebtoken");
@@ -27,6 +27,7 @@ const GoogleStrategy = require("passport-google-oauth20").Strategy;
 const GitHubStrategy = require("passport-github2").Strategy;
 
 const crypto = require("crypto");
+const { Resend } = require("resend");
 
 const app = express();
 app.use(express.json());
