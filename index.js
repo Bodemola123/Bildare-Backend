@@ -105,7 +105,7 @@ const transporter = nodemailer.createTransport({
 const sendOtpEmail = async (email, otp) => {
   try {
     await resend.emails.send({
-      from: `"Bildare team" <${process.env.EMAIL_USER}>`,
+      from: "teambildare@gmail.com",
       to: email,
       subject: "🔐 Your Bildare Verification Code",
       text: `Hello,\n\nYour One-Time Password (OTP) is: ${otp}\n\nPlease use this code to verify your email. It will expire in 10 minutes.\n\nThank you,\nThe Bildare Team`,
@@ -995,8 +995,8 @@ app.post("/contact", async (req, res) => {
 
     // Send email via Resend
     await resend.emails.send({
-      from: `${name} <${process.env.EMAIL_USER}>`,
-      to: `<${process.env.EMAIL_USER}>`,
+      from: 'Contact Form <teambuildare@gmail.com>',
+      to: 'teambuildare@gmail.com',
       subject: `📩 New Contact Form Submission: ${subject}`,
       html: htmlContent,
       text: `
