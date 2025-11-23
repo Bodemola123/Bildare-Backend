@@ -286,38 +286,45 @@ app.post("/signup", async (req, res) => {
       return res.status(400).json({ error: "Email and password are required" });
     }
 
-    // Check if user already exists in final user table
+    // Check if user already exists
     const existingUser = await prisma.user.findUnique({ where: { email } });
     if (existingUser) {
       return res.status(400).json({ error: "Email already registered" });
     }
 
-    // Check if a pending signup exists (overwrite it)
-    await prisma.pendingUser.deleteMany({ where: { email } });
-
     const hashedPassword = await bcrypt.hash(password, 10);
 
     // Generate OTP
     const otp = Math.floor(100000 + Math.random() * 900000).toString();
-    const otp_expires = new Date(Date.now() + 10 * 60 * 1000);
+    const otp_expires = new Date(Date.now() + 10 * 60 * 1000); // 10 min
 
-    // Create pending signup record
-    await prisma.pendingUser.create({
+    // Generate username from email
+    const baseUsername = email.split("@")[0];
+    const username = `${baseUsername}_${Math.floor(Math.random() * 10000)}`;
+
+    // Create user
+    const user = await prisma.user.create({
       data: {
         email,
-        password: hashedPassword,
+        password_hash: hashedPassword,
         otp,
-        otp_expires
+        otp_expires,
+        is_verified: false,
+        username,          // auto-generated
+        interests: null,   // optional
+        profile: { create: {} } // empty profile
       }
     });
 
-    // Send OTP email
-    sendOtpEmail(email, otp);
+    // Send OTP asynchronously
+
+  sendOtpEmail(email, otp);
 
     res.json({
-      message: "OTP sent to email. Please verify",
-      otp,
-      email
+      message: "OTP sent to email. Please verify within 10 minutes.",
+      otp, 
+      email,
+      username: user.username
     });
 
   } catch (err) {
@@ -327,46 +334,34 @@ app.post("/signup", async (req, res) => {
 });
 
 
-
 // 🔁 Resend OTP
 app.post("/resend-otp", async (req, res) => {
   try {
     const { email } = req.body;
     if (!email) return res.status(400).json({ error: "Email is required" });
 
-    const pending = await prisma.pendingUser.findUnique({ where: { email } });
-
-    if (!pending) {
-      return res.status(404).json({ error: "Pending account not found" });
-    }
-
-    // Prevent resending if already verified (means user exists)
-    const alreadyUser = await prisma.user.findUnique({ where: { email } });
-    if (alreadyUser) {
-      return res.status(400).json({ error: "This email is already verified" });
-    }
+    const user = await prisma.user.findUnique({ where: { email } });
+    if (!user) return res.status(400).json({ error: "User not found" });
+    if (user.is_verified) return res.status(400).json({ error: "Already verified" });
 
     const today = new Date().toISOString().split("T")[0];
-    const lastDay = pending.otp_request_date?.toISOString().split("T")[0];
+    const lastRequestDay = user.otp_request_date?.toISOString().split("T")[0];
 
-    let requestCount = pending.otp_request_count;
+    // Reset counter if new day
+    let requestCount = user.otp_request_count;
+    if (today !== lastRequestDay) requestCount = 0;
 
-    // Reset count if new day
-    if (today !== lastDay) requestCount = 0;
-
-    // Limit 5 per day
     if (requestCount >= 5) {
       return res.status(429).json({
-        error: "You have reached the maximum OTP attempts for today. Try again tomorrow.",
+        error: "Maximum OTP requests reached. Try again tomorrow.",
       });
     }
 
-    // Generate new OTP
+    // Generate OTP
     const otp = Math.floor(100000 + Math.random() * 900000).toString();
-    const otp_expires = new Date(Date.now() + 10 * 60 * 1000); // 10 mins
+    const otp_expires = new Date(Date.now() + 10 * 60 * 1000);
 
-    // Save to DB
-    await prisma.pendingUser.update({
+    await prisma.user.update({
       where: { email },
       data: {
         otp,
@@ -376,49 +371,9 @@ app.post("/resend-otp", async (req, res) => {
       },
     });
 
-    // Send email
-    await sendOtpEmail(email, otp);
+    sendOtpEmail(email, otp);
 
-    res.json({ message: "A new OTP has been sent to your email." });
-  } catch (err) {
-    console.error("OTP resend error:", err);
-    res.status(500).json({ error: "Server error" });
-  }
-});
-
-
-
-// 2️⃣ Verify OTP
-app.post("/verify-otp", async (req, res) => {
-  try {
-    const { email, otp } = req.body;
-
-    const pending = await prisma.pendingUser.findUnique({ where: { email } });
-    if (!pending) return res.status(400).json({ error: "No signup found" });
-
-    if (pending.is_otp_verified)
-      return res.json({ message: "OTP already verified. Proceed to complete profile.", email });
-
-    if (new Date() > pending.otp_expires)
-      return res.status(400).json({ error: "OTP expired" });
-
-    if (pending.otp !== otp)
-      return res.status(400).json({ error: "Invalid OTP" });
-
-    // Mark verified
-    await prisma.pendingUser.update({
-      where: { email },
-      data: {
-        is_otp_verified: true,
-        otp: null, // optional cleanup
-      },
-    });
-
-    res.json({
-      message: "OTP verified. Proceed to complete your profile.",
-      email
-    });
-
+    res.json({ message: "New OTP sent to email." });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "Server error" });
@@ -426,6 +381,32 @@ app.post("/verify-otp", async (req, res) => {
 });
 
 
+// 2️⃣ Verify OTP
+app.post("/verify-otp", async (req, res) => {
+  try {
+    const { email, otp } = req.body;
+    if (!email || !otp) return res.status(400).json({ error: "Email and OTP are required" });
+
+    const user = await prisma.user.findUnique({ where: { email } });
+    if (!user) return res.status(400).json({ error: "User not found" });
+    if (user.is_verified) return res.status(400).json({ error: "Already verified" });
+
+    if (!user.otp || !user.otp_expires || new Date() > user.otp_expires)
+      return res.status(400).json({ error: "OTP expired. Request a new one." });
+
+    if (user.otp !== otp) return res.status(400).json({ error: "Invalid OTP" });
+
+    await prisma.user.update({
+      where: { email },
+      data: { is_verified: true, otp: null, otp_expires: null },
+    });
+
+    res.json({ message: "OTP verified. Now complete your profile." });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Server error" });
+  }
+});
 
 
 // 3️⃣ Complete Profile (issues tokens, creates session, and profile)
@@ -434,6 +415,7 @@ app.post("/complete-profile", async (req, res) => {
   try {
     const {
       email,
+      password,          // required
       username,
       role,
       first_name,
@@ -445,23 +427,28 @@ app.post("/complete-profile", async (req, res) => {
       referralCode
     } = req.body;
 
-    // Get pending record
-    const pending = await prisma.pendingUser.findUnique({ where: { email } });
-    if (!pending) {
-      return res.status(400).json({ error: "Email not verified" });
+    if (!email || !password || !username || !role) {
+      return res.status(400).json({ error: "Email, password, username, and role are required" });
     }
 
-    if (!pending.is_otp_verified) {
+    // Find existing user (from signup) who may not have completed profile yet
+    let existingUser = await prisma.user.findUnique({ where: { email } });
+
+    if (!existingUser) {
+      return res.status(400).json({ error: "User not found. Please signup first." });
+    }
+
+    if (existingUser.is_verified === false) {
       return res.status(400).json({ error: "Please verify OTP before completing profile." });
     }
 
-    // Check username availability
+    // Check if username is already taken by another user
     const usernameTaken = await prisma.user.findUnique({ where: { username } });
-    if (usernameTaken) {
+    if (usernameTaken && usernameTaken.user_id !== existingUser.user_id) {
       return res.status(400).json({ error: "Username already taken" });
     }
 
-    // Handle referrals
+    // Handle referral code
     let referredByUserId = null;
     if (referralCode) {
       const refRecord = await prisma.referralCode.findUnique({ where: { code: referralCode } });
@@ -469,69 +456,72 @@ app.post("/complete-profile", async (req, res) => {
       referredByUserId = refRecord.user_id;
     }
 
-    // Generate user's referral code
+    // Hash password
+    const hashedPassword = await bcrypt.hash(password, 10);
+
+    // Generate this user's referral code
     const myReferralCode = `${username.slice(0, 4).toUpperCase()}${Math.floor(1000 + Math.random() * 9000)}`;
 
-    // Create final user
-    const user = await prisma.user.create({
+    // Update user and create profile atomically
+    const updatedUser = await prisma.user.update({
+      where: { user_id: existingUser.user_id },
       data: {
-        email,
         username,
         role,
-        password_hash: pending.password,
+        password_hash: hashedPassword,
+        interests: interests || null,
         referred_by: referredByUserId,
         referralCode: myReferralCode,
-        is_verified: true,
-        interests: interests || null,
         profile: {
           create: {
             first_name,
             last_name,
             bio,
             avatar_url,
-            social_links
+            social_links: social_links || null
           }
         }
       },
       include: { profile: true }
     });
 
-    // Save referral code
+    // Save referral code in ReferralCode model
     await prisma.referralCode.create({
-      data: { code: myReferralCode, user_id: user.user_id }
+      data: { code: myReferralCode, user_id: updatedUser.user_id }
     });
 
-    // Delete pending record
-    await prisma.pendingUser.delete({ where: { email } });
-
-    // Generate tokens
+    // Generate JWT tokens
     const accessToken = jwt.sign(
-      { email: user.email, role: user.role },
+      { email: updatedUser.email, role: updatedUser.role },
       process.env.JWT_SECRET,
       { expiresIn: "1h" }
     );
 
     const refreshToken = jwt.sign(
-      { email: user.email },
+      { email: updatedUser.email },
       process.env.JWT_REFRESH_SECRET,
       { expiresIn: "7d" }
     );
 
-    // Create session
+    // Save session
     req.session.user = {
-      user_id: user.user_id,
-      username: user.username,
-      email: user.email,
-      role: user.role,
+      user_id: updatedUser.user_id,
+      email: updatedUser.email,
+      username: updatedUser.username,
+      role: updatedUser.role,
       accessToken,
       refreshToken,
-      profile_id: user.profile.profile_id,
+      profile_id: updatedUser.profile.profile_id,
       referralCode: myReferralCode
     };
 
     res.json({
-      message: "Profile completed!",
-      user,
+      message: "Profile completed successfully!",
+      user_id: updatedUser.user_id,
+      username: updatedUser.username,
+      role: updatedUser.role,
+      referralCode: myReferralCode,
+      profile: updatedUser.profile,
       accessToken,
       refreshToken
     });
@@ -541,7 +531,6 @@ app.post("/complete-profile", async (req, res) => {
     res.status(500).json({ error: "Server error" });
   }
 });
-
 
 
 
