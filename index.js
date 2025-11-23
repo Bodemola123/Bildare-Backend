@@ -960,12 +960,8 @@ app.post("/contact", async (req, res) => {
       return res.status(400).json({ error: "All fields are required." });
     }
 
-    // Compose email content
-    const mailOptions = {
-      from: `"Bildare Website Contact" <${process.env.EMAIL_USER}>`,
-      to: "bildare.auth@gmail.com",
-      subject: `📩 New Contact Form Submission: ${subject}`,
-      html: `
+    // Compose HTML content
+    const htmlContent = `
       <div style="margin:0; padding:0; font-family: 'Helvetica', Arial, sans-serif; background-color:#f4f4f4;">
         <table width="100%" cellpadding="0" cellspacing="0" style="max-width:600px; margin:auto; background:#ffffff; border-radius:12px; overflow:hidden; box-shadow:0 0 10px rgba(0,0,0,0.1);">
           <tr>
@@ -991,10 +987,21 @@ app.post("/contact", async (req, res) => {
           </tr>
         </table>
       </div>
-      `,
-    };
+    `;
 
-    await transporter.sendMail(mailOptions);
+    // Send email via Resend
+    await resend.emails.send({
+      from: `${name} <${process.env.EMAIL_USER}>`,
+      to: `<${process.env.EMAIL_USER}>`,
+      subject: `📩 New Contact Form Submission: ${subject}`,
+      html: htmlContent,
+      text: `
+        Name: ${name}
+        Email: ${email}
+        Subject: ${subject}
+        Message: ${message}
+      `, // fallback plain text
+    });
 
     res.json({ message: "Your message has been sent successfully!" });
   } catch (err) {
@@ -1002,7 +1009,6 @@ app.post("/contact", async (req, res) => {
     res.status(500).json({ error: "Failed to send message." });
   }
 });
-
 
 // Root route (for testing)
 app.get("/", (req, res) => {
