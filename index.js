@@ -7,7 +7,10 @@ const bcrypt = require("bcrypt");
 const jwt = require("jsonwebtoken");
 const cors = require("cors");
 const nodemailer = require("nodemailer");
+const { Resend } = require("resend");
 require("dotenv").config();
+
+
 
 
 const resend = new Resend(process.env.RESEND_API_KEY);
@@ -27,7 +30,7 @@ const GoogleStrategy = require("passport-google-oauth20").Strategy;
 const GitHubStrategy = require("passport-github2").Strategy;
 
 const crypto = require("crypto");
-const { Resend } = require("resend");
+
 
 const app = express();
 app.use(express.json());
