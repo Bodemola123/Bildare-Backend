@@ -285,70 +285,65 @@ app.post("/signup", async (req, res) => {
       return res.status(400).json({ error: "Email and password are required" });
     }
 
-    // Check if user already exists
     const existingUser = await prisma.user.findUnique({ where: { email } });
-    if (existingUser) {
-      return res.status(400).json({ error: "Email already registered" });
-    }
 
     const hashedPassword = await bcrypt.hash(password, 10);
 
-    // Generate OTP
+    // Generate new OTP
     const otp = Math.floor(100000 + Math.random() * 900000).toString();
-    const otp_expires = new Date(Date.now() + 10 * 60 * 1000); // 10 min
+    const otp_expires = new Date(Date.now() + 10 * 60 * 1000);
 
-    // Generate username from email
+    // If user exists BUT not verified → allow signup again
+    if (existingUser && !existingUser.is_verified) {
+      // Update the existing unverified user
+      const updatedUser = await prisma.user.update({
+        where: { email },
+        data: {
+          password_hash: hashedPassword,
+          otp,
+          otp_expires,
+          otp_request_count: 1,
+          otp_request_date: new Date(),
+        }
+      });
+
+      sendOtpEmail(email, otp);
+
+      return res.json({
+        message: "OTP resent. Please verify your email.",
+        email,
+        username: updatedUser.username,
+      });
+    }
+
+    // If user exists and IS verified → block
+    if (existingUser && existingUser.is_verified) {
+      return res.status(400).json({ error: "Email already registered" });
+    }
+
+    // Else → create completely new user
     const baseUsername = email.split("@")[0];
     const username = `${baseUsername}_${Math.floor(Math.random() * 10000)}`;
 
-    // Create user
-    const user = await prisma.user.create({
+    const newUser = await prisma.user.create({
       data: {
         email,
         password_hash: hashedPassword,
         otp,
         otp_expires,
         is_verified: false,
-        username,          // auto-generated
-        interests: null,   // optional
-        profile: { create: {} } // empty profile
+        username,
+        interests: null,
+        profile: { create: {} }
       }
     });
 
-    // Send OTP asynchronously
-    const sendOtpEmail = async (email, otp) => {
-  try {
-    await transporter.sendMail({
-      from: `"Bildare Auth" <${process.env.EMAIL_USER}>`,
-      to: email,
-      subject: "🔐 Your Bildare Verification Code",
-      text: `Hello,\n\nYour One-Time Password (OTP) is: ${otp}\n\nPlease use this code to verify your email. It will expire in 10 minutes.\n\nThank you,\nThe Bildare Team`,
-      html: `
-      <div style="font-family: Arial, sans-serif; line-height:1.5; color:#333;">
-        <h2>Welcome to <span style="color:#ff510d;">Bildare</span> 🎉</h2>
-        <p>We are excited to have you on board! To complete your sign up, please verify your email using the OTP below:</p>
-        <div style="margin:20px 0; padding:15px; background:#f4f4f4; border-radius:8px; text-align:center;">
-          <h1 style="color:#182a4e; letter-spacing:5px;">${otp}</h1>
-        </div>
-        <p>This code will expire in <b>10 minutes</b>. If you did not request this, please ignore this email.</p>
-        <p style="margin-top:30px;">Cheers,<br><b>The Bildare Team</b></p>
-      </div>
-    `,
-    });
-    console.log("✅ OTP email sent to", email);
-  } catch (err) {
-    console.error("❌ Failed to send OTP email:", err.message || err);
-    // don't throw — signup should still continue; frontend can show notice
-  }
-};
-
-  sendOtpEmail(email, otp);
+    sendOtpEmail(email, otp);
 
     res.json({
       message: "OTP sent to email. Please verify within 10 minutes.",
-      otp, 
       email,
-      username: user.username
+      username: newUser.username,
     });
 
   } catch (err) {
@@ -356,6 +351,7 @@ app.post("/signup", async (req, res) => {
     res.status(500).json({ error: "Server error" });
   }
 });
+
 
 
 // 🔁 Resend OTP
@@ -437,9 +433,8 @@ app.post("/verify-otp", async (req, res) => {
 // Verify OTP then complete profile
 app.post("/complete-profile", async (req, res) => {
   try {
-    const {
+    const { 
       email,
-      password,          // required
       username,
       role,
       first_name,
@@ -451,48 +446,50 @@ app.post("/complete-profile", async (req, res) => {
       referralCode
     } = req.body;
 
-    if (!email || !password || !username || !role) {
-      return res.status(400).json({ error: "Email, password, username, and role are required" });
-    }
+    if (!email || !username || !role)
+      return res.status(400).json({ error: "Email, username, and role are required" });
 
-    // Find existing user (from signup) who may not have completed profile yet
-    let existingUser = await prisma.user.findUnique({ where: { email } });
+    const existingUser = await prisma.user.findUnique({ where: { email } });
 
-    if (!existingUser) {
-      return res.status(400).json({ error: "User not found. Please signup first." });
-    }
+    if (!existingUser)
+      return res.status(400).json({ error: "User not found" });
 
-    if (existingUser.is_verified === false) {
-      return res.status(400).json({ error: "Please verify OTP before completing profile." });
-    }
+    if (!existingUser.is_verified)
+      return res.status(400).json({ error: "Verify OTP before completing profile." });
 
-    // Check if username is already taken by another user
+    // unique username
     const usernameTaken = await prisma.user.findUnique({ where: { username } });
-    if (usernameTaken && usernameTaken.user_id !== existingUser.user_id) {
+    if (usernameTaken && usernameTaken.user_id !== existingUser.user_id)
       return res.status(400).json({ error: "Username already taken" });
-    }
 
-    // Handle referral code
+    // referral code
     let referredByUserId = null;
+
     if (referralCode) {
-      const refRecord = await prisma.referralCode.findUnique({ where: { code: referralCode } });
-      if (!refRecord) return res.status(400).json({ error: "Invalid referral code" });
-      referredByUserId = refRecord.user_id;
+      const ref = await prisma.referralCode.findUnique({ where: { code: referralCode } });
+
+      if (!ref)
+        return res.status(400).json({ error: "Invalid referral code" });
+
+      if (ref.user_id === existingUser.user_id)
+        return res.status(400).json({ error: "You cannot use your own referral code" });
+
+      if (existingUser.referred_by)
+        return res.status(400).json({ error: "Referral code already used" });
+
+      referredByUserId = ref.user_id;
     }
 
-    // Hash password
-    const hashedPassword = await bcrypt.hash(password, 10);
+    // generate this user's referral code
+    const myReferralCode = username.slice(0, 4).toUpperCase() +
+      Math.floor(1000 + Math.random() * 9000);
 
-    // Generate this user's referral code
-    const myReferralCode = `${username.slice(0, 4).toUpperCase()}${Math.floor(1000 + Math.random() * 9000)}`;
-
-    // Update user and create profile atomically
+    // update user + create profile
     const updatedUser = await prisma.user.update({
       where: { user_id: existingUser.user_id },
       data: {
         username,
         role,
-        password_hash: hashedPassword,
         interests: interests || null,
         referred_by: referredByUserId,
         referralCode: myReferralCode,
@@ -502,19 +499,19 @@ app.post("/complete-profile", async (req, res) => {
             last_name,
             bio,
             avatar_url,
-            social_links: social_links || null
+            social_links
           }
         }
       },
       include: { profile: true }
     });
 
-    // Save referral code in ReferralCode model
+    // Save referral code
     await prisma.referralCode.create({
       data: { code: myReferralCode, user_id: updatedUser.user_id }
     });
 
-    // Generate JWT tokens
+    // Tokens
     const accessToken = jwt.sign(
       { email: updatedUser.email, role: updatedUser.role },
       process.env.JWT_SECRET,
@@ -527,7 +524,6 @@ app.post("/complete-profile", async (req, res) => {
       { expiresIn: "7d" }
     );
 
-    // Save session
     req.session.user = {
       user_id: updatedUser.user_id,
       email: updatedUser.email,
@@ -555,6 +551,7 @@ app.post("/complete-profile", async (req, res) => {
     res.status(500).json({ error: "Server error" });
   }
 });
+
 
 
 
