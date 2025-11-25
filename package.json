@@ -11,6 +11,7 @@
   "license": "ISC",
   "description": "",
   "dependencies": {
+    "@emailjs/browser": "^4.4.1",
     "@prisma/adapter-pg": "^7.0.0",
     "@prisma/client": "^6.19.0",
     "axios": "^1.11.0",
@@ -19,6 +20,8 @@
     "connect-pg-simple": "^10.0.0",
     "cors": "^2.8.5",
     "dotenv": "^17.2.3",
+    "emailjs": "^4.0.3",
+    "emailjs-com": "^3.2.0",
     "express": "^5.1.0",
     "express-session": "^1.18.2",
     "jsonwebtoken": "^9.0.2",
