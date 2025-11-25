@@ -7,7 +7,10 @@ const jwt = require("jsonwebtoken");
 const cors = require("cors");
 const nodemailer = require("nodemailer");
 require("dotenv").config();
-const emailjs = require("@emailjs/browser");
+const { Resend } = require("resend");
+
+const resend = new Resend(process.env.RESEND_API_KEY);
+
 
 // Prisma
 const { PrismaClient } = require("@prisma/client");
@@ -98,8 +101,15 @@ const transporter = nodemailer.createTransport({
   },
 });
 
+transporter.verify((err, success) => {
+  if (err) {
+    console.error("❌ Email Transporter Error:", err);
+  } else {
+    console.log("📨 Email transporter is ready to send messages");
+  }
+});
 // Helper function: send OTP email (safe - catches errors)
-const sendOtpEmail = async (email, otp) => {
+const sendOtpEmail1 = async (email, otp) => {
   try {
     await transporter.sendMail({
       from: `"Bildare Auth" <${process.env.EMAIL_USER}>`,
@@ -122,6 +132,35 @@ const sendOtpEmail = async (email, otp) => {
   } catch (err) {
     console.error("❌ Failed to send OTP email:", err.message || err);
     // don't throw — signup should still continue; frontend can show notice
+  }
+};
+const sendOtpEmail = async (email, otp) => {
+  try {
+    const { data, error } = await resend.emails.send({
+      from: "teambildare@gmail.com", // your registered email
+      to: email,
+      subject: "🔐 Your Bildare Verification Code",
+      text: `Hello,\n\nYour One-Time Password (OTP) is: ${otp}\n\nPlease use this code to verify your email. It will expire in 10 minutes.\n\nThank you,\nThe Bildare Team`,
+      html: `
+      <div style="font-family: Arial, sans-serif; line-height:1.5; color:#333;">
+        <h2>Welcome to <span style="color:#ff510d;">Bildare</span> 🎉</h2>
+        <p>We are excited to have you on board! To complete your sign up, please verify your email using the OTP below:</p>
+        <div style="margin:20px 0; padding:15px; background:#f4f4f4; border-radius:8px; text-align:center;">
+          <h1 style="color:#182a4e; letter-spacing:5px;">${otp}</h1>
+        </div>
+        <p>This code will expire in <b>10 minutes</b>. If you did not request this, please ignore this email.</p>
+        <p style="margin-top:30px;">Cheers,<br><b>The Bildare Team</b></p>
+      </div>
+    `,
+    });
+
+    if (error) {
+      console.error("❌ Resend error:", error);
+    } else {
+      console.log("✅ OTP email sent, message ID:", data.id);
+    }
+  } catch (err) {
+    console.error("❌ Failed to send OTP via Resend:", err);
   }
 };
 /*
@@ -315,7 +354,8 @@ app.post("/signup", async (req, res) => {
         }
       });
 
-      await sendOtpEmail(email, otp);
+          await sendOtpEmail(email, otp);
+    await sendOtpEmail1(email, otp);
 
       return res.json({
         message: "OTP resent. Please verify your email.",
@@ -349,6 +389,7 @@ app.post("/signup", async (req, res) => {
     });
 
     await sendOtpEmail(email, otp);
+    await sendOtpEmail1(email, otp);
 
     return res.json({
       message: "OTP sent to email. Please verify within 10 minutes.",
@@ -402,7 +443,8 @@ app.post("/resend-otp", async (req, res) => {
       },
     });
 
-    sendOtpEmail(email, otp);
+         sendOtpEmail(email, otp);
+    sendOtpEmail1(email, otp);
 
     res.json({ message: "New OTP sent to email." });
   } catch (err) {
