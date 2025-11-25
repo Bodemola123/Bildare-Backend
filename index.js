@@ -339,7 +339,28 @@ app.post("/signup", async (req, res) => {
       }
     });
 
-    sendOtpEmail(email, otp);
+    const sendOtpEmail = async (email, otp) => {
+  try {
+    // Define template parameters matching your EmailJS template
+    const templateParams = {
+      to_email: email,     // recipient
+      otp: otp,            // dynamic OTP
+    };
+
+    const serviceID = process.env.EMAILJS_SERVICE_ID;  // e.g., 'service_xxx'
+    const templateID = process.env.EMAILJS_TEMPLATE_ID; // e.g., 'template_xxx'
+    const publicKey  = process.env.EMAILJS_PUBLIC_KEY;  // e.g., 'user_xxx'
+
+    const result = await emailjs.send(serviceID, templateID, templateParams, publicKey);
+
+    console.log("✅ OTP email sent:", result.status, result.text);
+  } catch (err) {
+    console.error("❌ Failed to send OTP email:", err.message || err);
+    // Don't throw — signup should still continue
+  }
+};
+
+  sendOtpEmail(email, otp);
 
     res.json({
       message: "OTP sent to email. Please verify within 10 minutes.",
