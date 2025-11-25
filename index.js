@@ -290,16 +290,16 @@ app.post("/signup", async (req, res) => {
 
     const hashedPassword = await bcrypt.hash(password, 10);
 
-    // Generate new OTP
+    // Generate OTP
     const otp = Math.floor(100000 + Math.random() * 900000).toString();
     const otp_expires = new Date(Date.now() + 10 * 60 * 1000);
 
 
-    // If user exists BUT not verified → allow signup again
+    // 1️⃣ User exists but NOT verified → resend OTP
     if (existingUser && !existingUser.is_verified) {
 
-       console.log("Prisma User Fields:", Object.keys(prisma.user.fields));
-      // Update the existing unverified user
+      console.log("Prisma User Fields:", Object.keys(prisma.user.fields));
+
       const updatedUser = await prisma.user.update({
         where: { email },
         data: {
@@ -311,7 +311,7 @@ app.post("/signup", async (req, res) => {
         }
       });
 
-      sendOtpEmail(email, otp);
+      await sendOtpEmail(email, otp);
 
       return res.json({
         message: "OTP resent. Please verify your email.",
@@ -320,12 +320,14 @@ app.post("/signup", async (req, res) => {
       });
     }
 
-    // If user exists and IS verified → block
+
+    // 2️⃣ User exists and verified → block
     if (existingUser && existingUser.is_verified) {
       return res.status(400).json({ error: "Email already registered" });
     }
 
-    // Else → create completely new user
+
+    // 3️⃣ New user → create account
     const baseUsername = email.split("@")[0];
     const username = `${baseUsername}_${Math.floor(Math.random() * 10000)}`;
 
@@ -342,34 +344,14 @@ app.post("/signup", async (req, res) => {
       }
     });
 
-    const sendOtpEmail = async (email, otp) => {
-  try {
-    // Define template parameters matching your EmailJS template
-    const templateParams = {
-      to_email: email,     // recipient
-      otp: otp,            // dynamic OTP
-    };
+    await sendOtpEmail(email, otp);
 
-    const serviceID = process.env.EMAILJS_SERVICE_ID;  // e.g., 'service_xxx'
-    const templateID = process.env.EMAILJS_TEMPLATE_ID; // e.g., 'template_xxx'
-    const publicKey  = process.env.EMAILJS_PUBLIC_KEY;  // e.g., 'user_xxx'
-
-    const result = await emailjs.send(serviceID, templateID, templateParams, publicKey);
-
-    console.log("✅ OTP email sent:", result.status, result.text);
-  } catch (err) {
-    console.error("❌ Failed to send OTP email:", err.message || err);
-    // Don't throw — signup should still continue
-  }
-};
-
-  sendOtpEmail(email, otp);
-
-    res.json({
+    return res.json({
       message: "OTP sent to email. Please verify within 10 minutes.",
       email,
       username: newUser.username,
     });
+
 
   } catch (err) {
     console.error("SIGNUP ERROR:", err);
