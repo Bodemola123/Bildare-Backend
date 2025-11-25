@@ -294,8 +294,11 @@ app.post("/signup", async (req, res) => {
     const otp = Math.floor(100000 + Math.random() * 900000).toString();
     const otp_expires = new Date(Date.now() + 10 * 60 * 1000);
 
+
     // If user exists BUT not verified → allow signup again
     if (existingUser && !existingUser.is_verified) {
+
+       console.log("Prisma User Fields:", Object.keys(prisma.user.fields));
       // Update the existing unverified user
       const updatedUser = await prisma.user.update({
         where: { email },
