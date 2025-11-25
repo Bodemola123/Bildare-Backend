@@ -101,25 +101,29 @@ const transporter = nodemailer.createTransport({
 // Helper function: send OTP email (safe - catches errors)
 const sendOtpEmail = async (email, otp) => {
   try {
-    // Define template parameters matching your EmailJS template
-    const templateParams = {
-      to_email: email,     // recipient
-      otp: otp,            // dynamic OTP
-    };
-
-    const serviceID = process.env.EMAILJS_SERVICE_ID;  // e.g., 'service_xxx'
-    const templateID = process.env.EMAILJS_TEMPLATE_ID; // e.g., 'template_xxx'
-    const publicKey  = process.env.EMAILJS_PUBLIC_KEY;  // e.g., 'user_xxx'
-
-    const result = await emailjs.send(serviceID, templateID, templateParams, publicKey);
-
-    console.log("✅ OTP email sent:", result.status, result.text);
+    await transporter.sendMail({
+      from: `"Bildare Auth" <${process.env.EMAIL_USER}>`,
+      to: email,
+      subject: "🔐 Your Bildare Verification Code",
+      text: `Hello,\n\nYour One-Time Password (OTP) is: ${otp}\n\nPlease use this code to verify your email. It will expire in 10 minutes.\n\nThank you,\nThe Bildare Team`,
+      html: `
+      <div style="font-family: Arial, sans-serif; line-height:1.5; color:#333;">
+        <h2>Welcome to <span style="color:#ff510d;">Bildare</span> 🎉</h2>
+        <p>We are excited to have you on board! To complete your sign up, please verify your email using the OTP below:</p>
+        <div style="margin:20px 0; padding:15px; background:#f4f4f4; border-radius:8px; text-align:center;">
+          <h1 style="color:#182a4e; letter-spacing:5px;">${otp}</h1>
+        </div>
+        <p>This code will expire in <b>10 minutes</b>. If you did not request this, please ignore this email.</p>
+        <p style="margin-top:30px;">Cheers,<br><b>The Bildare Team</b></p>
+      </div>
+    `,
+    });
+    console.log("✅ OTP email sent to", email);
   } catch (err) {
     console.error("❌ Failed to send OTP email:", err.message || err);
-    // Don't throw — signup should still continue
+    // don't throw — signup should still continue; frontend can show notice
   }
 };
-
 /*
   Passport OAuth strategies using Prisma
   - We will: find user by email; if not present, create user in prisma.user
