@@ -47,24 +47,31 @@ const isProduction = process.env.NODE_ENV === "production";
 app.set("trust proxy", 1); // if behind a proxy (like Heroku/Render)
 
 // Session middleware using Postgres (connect-pg-simple)
-app.use(session({
-  name: process.env.SESSION_COOKIE_NAME || "sid",
-  secret: process.env.SESSION_SECRET || "sessionsecret",
-  resave: false,
-  saveUninitialized: false,
-  store: new pgSession({
-    // supply connection string (or a pool) for connect-pg-simple
-    conString: process.env.DATABASE_URL,
-    tableName: "session",
-    schemaName: "auth",
-  }),
-  cookie: {
-    httpOnly: true,
-    secure: isProduction,                 // true in production (requires HTTPS)
-    sameSite: isProduction ? "none" : "lax",
-    maxAge: 7 * 24 * 60 * 60 * 1000,     // 7 days
-  },
-}));
+app.use(
+  session({
+    name: process.env.SESSION_COOKIE_NAME || "sid",
+    secret: process.env.SESSION_SECRET || "sessionsecret",
+    resave: false,
+    saveUninitialized: false,
+    store: new pgSession({
+      conObject: {
+        connectionString: process.env.DATABASE_URL,
+        ssl: {
+          rejectUnauthorized: false, // Required for Render/Postgres in production
+        },
+      },
+      tableName: "session",
+      schemaName: "auth",
+    }),
+    cookie: {
+      httpOnly: true,
+      secure: isProduction,
+      sameSite: isProduction ? "none" : "lax",
+      maxAge: 7 * 24 * 60 * 60 * 1000,
+    },
+  })
+);
+
 
 // Passport initialization (we are issuing JWTs so passport.session() is optional)
 // If you plan to use sessions with passport, uncomment the line below:
