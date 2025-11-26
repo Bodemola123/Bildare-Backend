@@ -317,46 +317,23 @@ app.post("/signup", async (req, res) => {
 
     const existingUser = await prisma.user.findUnique({ where: { email } });
 
-    const hashedPassword = await bcrypt.hash(password, 10);
-
-    // Generate OTP
-    const otp = Math.floor(100000 + Math.random() * 900000).toString();
-    const otp_expires = new Date(Date.now() + 10 * 60 * 1000);
-
-
-    // 1️⃣ User exists but NOT verified → resend OTP
-    if (existingUser && !existingUser.is_verified) {
-
-      console.log("Prisma User Fields:", Object.keys(prisma.user.fields));
-
-      const updatedUser = await prisma.user.update({
-        where: { email },
-        data: {
-          password_hash: hashedPassword,
-          otp,
-          otp_expires,
-          otp_request_count: 1,
-          otp_request_date: new Date(),
-        }
-      });
-
-    await sendOtpEmail(email, otp);
-
-      return res.json({
-        message: "OTP resent. Please verify your email.",
-        email,
-        username: updatedUser.username,
-      });
-    }
-
-
-    // 2️⃣ User exists and verified → block
+    // If user exists and verified → block
     if (existingUser && existingUser.is_verified) {
       return res.status(400).json({ error: "Email already registered" });
     }
 
+    const hashedPassword = await bcrypt.hash(password, 10);
 
-    // 3️⃣ New user → create account
+    // If user exists but NOT verified → simply allow them to continue sign-up (no OTP required)
+    if (existingUser && !existingUser.is_verified) {
+      return res.json({
+        message: "Account exists. Continue to complete your profile.",
+        email,
+        username: existingUser.username,
+      });
+    }
+
+    // New user → create account
     const baseUsername = email.split("@")[0];
     const username = `${baseUsername}_${Math.floor(Math.random() * 10000)}`;
 
@@ -364,29 +341,25 @@ app.post("/signup", async (req, res) => {
       data: {
         email,
         password_hash: hashedPassword,
-        otp,
-        otp_expires,
-        is_verified: false,
+        is_verified: false, // will become true after complete-profile
         username,
         interests: null,
         profile: { create: {} }
       }
     });
 
-    await sendOtpEmail(email, otp);
-
     return res.json({
-      message: "OTP sent to email. Please verify within 10 minutes.",
+      message: "Account created. Continue to complete your profile.",
       email,
       username: newUser.username,
     });
-
 
   } catch (err) {
     console.error("SIGNUP ERROR:", err);
     res.status(500).json({ error: "Server error" });
   }
 });
+
 
 
 
@@ -490,8 +463,8 @@ app.post("/complete-profile", async (req, res) => {
     if (!existingUser)
       return res.status(400).json({ error: "User not found" });
 
-    if (!existingUser.is_verified)
-      return res.status(400).json({ error: "Verify OTP before completing profile." });
+    // if (!existingUser.is_verified)
+    //   return res.status(400).json({ error: "Verify OTP before completing profile." });
 
     // unique username
     const usernameTaken = await prisma.user.findUnique({ where: { username } });
@@ -526,6 +499,7 @@ app.post("/complete-profile", async (req, res) => {
       data: {
         username,
         role,
+        is_verified: true,   // ← ✔ Automatically verified here
         interests: interests || null,
         referred_by: referredByUserId,
         referralCode: myReferralCode,
