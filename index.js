@@ -652,6 +652,7 @@ app.get("/me", async (req, res) => {
       email: user.email,
       username: user.username,
       role: user.role,
+      interests: user.interests || null,          // 👈 added
       referralCode: user.referralCode || null,    // 👈 added
       referred_by: user.referred_by || null,      // 👈 added
       referredBy: user.referredBy || null,        // 👈 added full object
