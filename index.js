@@ -361,8 +361,6 @@ app.post("/signup", async (req, res) => {
 });
 
 
-
-
 // 🔁 Resend OTP
 app.post("/resend-otp", async (req, res) => {
   try {
@@ -494,27 +492,28 @@ app.post("/complete-profile", async (req, res) => {
       Math.floor(1000 + Math.random() * 9000);
 
     // update user + create profile
-    const updatedUser = await prisma.user.update({
-      where: { user_id: existingUser.user_id },
-      data: {
-        username,
-        role,
-        is_verified: true,   // ← ✔ Automatically verified here
-        interests: interests || null,
-        referred_by: referredByUserId,
-        referralCode: myReferralCode,
-        profile: {
-          create: {
-            first_name,
-            last_name,
-            bio,
-            avatar_url,
-            social_links
-          }
-        }
-      },
-      include: { profile: true }
-    });
+const updatedUser = await prisma.user.update({
+  where: { user_id: existingUser.user_id },
+  data: {
+    username,
+    role,
+    is_verified: true, // auto verify
+    interests: interests || null,
+    referred_by: referredByUserId,
+    referralCode: myReferralCode,
+    profile: {
+      update: {
+        first_name,
+        last_name,
+        bio,
+        avatar_url,
+        social_links
+      }
+    }
+  },
+  include: { profile: true }
+});
+
 
     // Save referral code
     await prisma.referralCode.create({
@@ -561,9 +560,6 @@ app.post("/complete-profile", async (req, res) => {
     res.status(500).json({ error: "Server error" });
   }
 });
-
-
-
 
 
 // 4️⃣ Login
