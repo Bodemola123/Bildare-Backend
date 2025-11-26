@@ -32,7 +32,8 @@
     "passport-github2": "^0.1.12",
     "passport-google-oauth20": "^2.0.0",
     "pg": "^8.16.3",
-    "resend": "^6.5.2"
+    "resend": "^6.5.2",
+    "sib-api-v3-sdk": "^8.5.0"
   },
   "devDependencies": {
     "install": "^0.13.0",
