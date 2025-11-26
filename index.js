@@ -187,8 +187,12 @@ passport.use(new GoogleStrategy({
     : "http://localhost:5000/auth/google/callback",
 }, async (accessToken, refreshToken, profile, done) => {
   try {
-    const email = profile?.emails && profile.emails[0] ? profile.emails[0].value : null;
+    let email = profile?.emails && profile.emails[0] ? profile.emails[0].value : null;
+    
+
     if (!email) return done(new Error("Google account has no email"), null);
+
+    email = email.trim().toLowerCase();
 
     // Find user by email
     let user = await prisma.user.findUnique({ where: { email } });
@@ -243,8 +247,11 @@ passport.use(new GitHubStrategy({
   scope: ["user:email"],
 }, async (accessToken, refreshToken, profile, done) => {
   try {
-    const email = profile?.emails && profile.emails[0] ? profile.emails[0].value : null;
+    let email = profile?.emails && profile.emails[0] ? profile.emails[0].value : null;
+    
+
     if (!email) return done(new Error("GitHub email not available"), null);
+    email = email.trim().toLowerCase();
 
     let user = await prisma.user.findUnique({ where: { email } });
 
@@ -309,11 +316,14 @@ passport.use(new GitHubStrategy({
 // Request OTP
 app.post("/signup", async (req, res) => {
   try {
-    const { email, password } = req.body;
+    let { email, password } = req.body;
 
     if (!email || !password) {
       return res.status(400).json({ error: "Email and password are required" });
     }
+
+    // Normalize email
+    email = email.trim().toLowerCase();
 
     const existingUser = await prisma.user.findUnique({ where: { email } });
 
@@ -324,7 +334,7 @@ app.post("/signup", async (req, res) => {
 
     const hashedPassword = await bcrypt.hash(password, 10);
 
-    // If user exists but NOT verified → simply allow them to continue sign-up (no OTP required)
+    // If user exists but NOT verified → allow them to continue sign-up
     if (existingUser && !existingUser.is_verified) {
       return res.json({
         message: "Account exists. Continue to complete your profile.",
@@ -333,15 +343,15 @@ app.post("/signup", async (req, res) => {
       });
     }
 
-    // New user → create account
+    // Create new user
     const baseUsername = email.split("@")[0];
     const username = `${baseUsername}_${Math.floor(Math.random() * 10000)}`;
 
     const newUser = await prisma.user.create({
       data: {
-        email,
+        email, // already normalized
         password_hash: hashedPassword,
-        is_verified: false, // will become true after complete-profile
+        is_verified: false,
         username,
         interests: null,
         profile: { create: {} }
@@ -365,6 +375,9 @@ app.post("/signup", async (req, res) => {
 app.post("/resend-otp", async (req, res) => {
   try {
     const { email } = req.body;
+
+    email = email.trim().toLowerCase();
+
     if (!email) return res.status(400).json({ error: "Email is required" });
 
     const user = await prisma.user.findUnique({ where: { email } });
@@ -412,6 +425,8 @@ app.post("/resend-otp", async (req, res) => {
 app.post("/verify-otp", async (req, res) => {
   try {
     const { email, otp } = req.body;
+    email = email.trim().toLowerCase();
+
     if (!email || !otp) return res.status(400).json({ error: "Email and OTP are required" });
 
     const user = await prisma.user.findUnique({ where: { email } });
@@ -453,8 +468,11 @@ app.post("/complete-profile", async (req, res) => {
       referralCode
     } = req.body;
 
+    email = email.trim().toLowerCase();
+
     if (!email || !username || !role)
       return res.status(400).json({ error: "Email, username, and role are required" });
+    
 
     const existingUser = await prisma.user.findUnique({ where: { email } });
 
@@ -567,6 +585,9 @@ const updatedUser = await prisma.user.update({
 app.post("/login", async (req, res) => {
   try {
     const { email, password } = req.body;
+
+    email = email.trim().toLowerCase();
+
     if (!email || !password) return res.status(400).json({ error: "Email and password required" });
 
     // Fetch user including profile
@@ -740,6 +761,8 @@ app.post("/token", async (req, res) => {
 app.post("/request-password-reset", async (req, res) => {
   try {
     const { email } = req.body;
+    email = email.trim().toLowerCase();
+
 
     const user = await prisma.user.findUnique({ where: { email } });
     if (!user) return res.status(400).json({ error: "User not found" });
@@ -788,6 +811,9 @@ app.post("/request-password-reset", async (req, res) => {
 app.post("/verify-reset-token", async (req, res) => {
   try {
     const { email, token } = req.body;
+
+    email = email.trim().toLowerCase();
+
     if (!email || !token) return res.status(400).json({ error: "Email and token are required" });
 
     const user = await prisma.user.findUnique({ where: { email } });
@@ -808,6 +834,8 @@ app.post("/verify-reset-token", async (req, res) => {
 app.post("/reset-password", async (req, res) => {
   try {
     const { email, newPassword } = req.body;
+    email = email.trim().toLowerCase();
+
     if (!email || !newPassword) return res.status(400).json({ error: "Email, token, and new password are required" });
 
     const user = await prisma.user.findUnique({ where: { email } });
@@ -917,14 +945,15 @@ app.get("/auth/google/callback",
   async (req, res) => {
     try {
       const { user_id, email, username, role, accessToken, refreshToken } = req.user;
-
+      
+      let normalEmail = email.trim().toLowerCase();
       // Fetch UserProfile (auto-created in strategy)
       const profile = await prisma.userProfile.findUnique({ where: { user_id } });
 
       // Normalize session
       req.session.user = { 
         user_id, 
-        email, 
+        email: normalEmail, 
         username, 
         role, 
         accessToken, 
@@ -950,13 +979,14 @@ app.get("/auth/github/callback",
     try {
       const { user_id, email, username, role, accessToken, refreshToken } = req.user;
 
+      let normalEmail = email.trim().toLowerCase();
       // Fetch UserProfile (auto-created in strategy)
       const profile = await prisma.userProfile.findUnique({ where: { user_id } });
 
       // Normalize session
       req.session.user = { 
         user_id, 
-        email, 
+        email:normalEmail, 
         username, 
         role, 
         accessToken, 
@@ -978,6 +1008,7 @@ app.get("/auth/github/callback",
 app.post("/contact", async (req, res) => {
   try {
     const { name, email, subject, message } = req.body;
+
 
     if (!name || !email || !subject || !message) {
       return res.status(400).json({ error: "All fields are required." });
