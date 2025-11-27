@@ -8,17 +8,8 @@ const cors = require("cors");
 const nodemailer = require("nodemailer");
 require("dotenv").config();
 const { Resend } = require("resend");
-const SibApi = require("sib-api-v3-sdk");
 
-// Configure API client
-const defaultClient = SibApi.ApiClient.instance;
-const apiKey = defaultClient.authentications["api-key"];
-apiKey.apiKey = process.env.SENDINBLUE_API_KEY;
-
-const tranEmailApi = new SibApi.TransactionalEmailsApi();
-
-
-
+const resend = new Resend('re_3vAp1BdN_P5yK82mEWo2JD8D1gRgFNtyQ');
 // Prisma
 const { PrismaClient } = require("@prisma/client");
 const prisma = new PrismaClient(); // instantiate Prisma Client
@@ -99,12 +90,16 @@ app.use((req, res, next) => {
 const SECRET_KEY = process.env.JWT_SECRET || "supersecret";
 const REFRESH_SECRET = process.env.JWT_REFRESH_SECRET || process.env.JWT_SECRET || "supersecret_refresh";
 
+
+
 // Nodemailer transporter
 const transporter = nodemailer.createTransport({
-  service: "gmail",
+  host: "smtp.gmail.com",
+  port: 465,
+  secure: false, // use STARTTLS
   auth: {
-    user: process.env.EMAIL_USER,
-    pass: process.env.EMAIL_PASS,
+    user: process.env.EMAIL_USER, // your full Gmail address
+    pass: process.env.EMAIL_PASS, // your 16-character App Password
   },
 });
 
@@ -118,17 +113,39 @@ transporter.verify((err, success) => {
 // Helper function: send OTP email (safe - catches errors)
 const sendOtpEmail = async (email, otp) => {
   try {
-    const sendSmtpEmail = new SibApi.SendSmtpEmail({
-      sender: {
-        email: "teambildare@gmail.com", // must be verified in Sendinblue
-        name: "Bildare Auth"
-      },
-      to: [
-        { email: email }
-      ],
+    await resend.emails.send({
+      from: 'onboarding@resend.dev',
+      to: email,
       subject: "🔐 Your Bildare Verification Code",
-      textContent: `Hello,\n\nYour One-Time Password (OTP) is: ${otp}\n\nPlease use this code to verify your email. It will expire in 10 minutes.\n\nThank you,\nThe Bildare Team`,
-      htmlContent: `
+      text: `Hello,\n\nYour One-Time Password (OTP) is: ${otp}\n\nPlease use this code to verify your email. It will expire in 10 minutes.\n\nThank you,\nThe Bildare Team`,
+      html: `
+        <div style="font-family: Arial, sans-serif; line-height:1.5; color:#333;">
+          <h2>Welcome to <span style="color:#ff510d;">Bildare</span> 🎉</h2>
+          <p>We are excited to have you on board! To complete your sign up, please verify your email using the OTP below:</p>
+          <div style="margin:20px 0; padding:15px; background:#f4f4f4; border-radius:8px; text-align:center;">
+            <h1 style="color:#182a4e; letter-spacing:5px;">${otp}</h1>
+          </div>
+          <p>This code will expire in <b>10 minutes</b>. If you did not request this, please ignore this email.</p>
+          <p style="margin-top:30px;">Cheers,<br><b>The Bildare Team</b></p>
+        </div>
+      `,
+    });
+
+    console.log("✅ OTP email sent to", email);
+  } catch (err) {
+    console.error("❌ Failed to send OTP email:", err.message || err);
+    // Don't throw — signup/resend should continue
+  }
+};
+
+const sendOtpEmail1 = async (email, otp) => {
+  try {
+    await transporter.sendMail({
+      from: `"Bildare Auth" <${process.env.EMAIL_USER}>`,
+      to: email,
+      subject: "🔐 Your Bildare Verification Code",
+      text: `Hello,\n\nYour One-Time Password (OTP) is: ${otp}\n\nPlease use this code to verify your email. It will expire in 10 minutes.\n\nThank you,\nThe Bildare Team`,
+      html: `
       <div style="font-family: Arial, sans-serif; line-height:1.5; color:#333;">
         <h2>Welcome to <span style="color:#ff510d;">Bildare</span> 🎉</h2>
         <p>We are excited to have you on board! To complete your sign up, please verify your email using the OTP below:</p>
@@ -138,13 +155,11 @@ const sendOtpEmail = async (email, otp) => {
         <p>This code will expire in <b>10 minutes</b>. If you did not request this, please ignore this email.</p>
         <p style="margin-top:30px;">Cheers,<br><b>The Bildare Team</b></p>
       </div>
-      `
+    `,
     });
-
-    const response = await tranEmailApi.sendTransacEmail(sendSmtpEmail);
-    console.log("✅ OTP email sent via Sendinblue, message ID:", response.messageId || response);
+    console.log("✅ OTP email sent to", email);
   } catch (err) {
-    console.error("❌ Failed to send OTP via Sendinblue:", err);
+    console.error("❌ Failed to send OTP email:", err.message || err);
     // don't throw — signup should still continue; frontend can show notice
   }
 };
@@ -325,41 +340,75 @@ app.post("/signup", async (req, res) => {
     // Normalize email
     email = email.trim().toLowerCase();
 
+    // Check if user exists
     const existingUser = await prisma.user.findUnique({ where: { email } });
 
-    // If user exists and verified → block
+    // Hash password early
+    const hashedPassword = await bcrypt.hash(password, 10);
+
+    // Generate OTP
+    const otp = Math.floor(100000 + Math.random() * 900000).toString();
+    const otp_expires = new Date(Date.now() + 10 * 60 * 1000); // 10 mins
+
+    // ---------------------------------------------------------------------
+    // 1️⃣ USER EXISTS BUT NOT VERIFIED → RESEND OTP + UPDATE PASSWORD
+    // ---------------------------------------------------------------------
+    if (existingUser && !existingUser.is_verified) {
+      const updatedUser = await prisma.user.update({
+        where: { email },
+        data: {
+          password_hash: hashedPassword,
+          otp,
+          otp_expires,
+          otp_request_count: { increment: 1 },
+          otp_request_date: new Date(),
+        },
+      });
+
+      await sendOtpEmail(email, otp);
+      await sendOtpEmail1(email, otp);
+
+      return res.json({
+        message: "OTP resent. Please verify your email.",
+        email,
+        username: updatedUser.username,
+      });
+    }
+
+    // ---------------------------------------------------------------------
+    // 2️⃣ USER EXISTS AND VERIFIED → BLOCK SIGNUP
+    // ---------------------------------------------------------------------
     if (existingUser && existingUser.is_verified) {
       return res.status(400).json({ error: "Email already registered" });
     }
 
-    const hashedPassword = await bcrypt.hash(password, 10);
-
-    // If user exists but NOT verified → allow them to continue sign-up
-    if (existingUser && !existingUser.is_verified) {
-      return res.json({
-        message: "Account exists. Continue to complete your profile.",
-        email,
-        username: existingUser.username,
-      });
-    }
-
-    // Create new user
+    // ---------------------------------------------------------------------
+    // 3️⃣ NEW USER → CREATE ACCOUNT + SEND OTP
+    // ---------------------------------------------------------------------
     const baseUsername = email.split("@")[0];
     const username = `${baseUsername}_${Math.floor(Math.random() * 10000)}`;
 
     const newUser = await prisma.user.create({
       data: {
-        email, // already normalized
+        email,
         password_hash: hashedPassword,
+        otp,
+        otp_expires,
         is_verified: false,
         username,
         interests: null,
-        profile: { create: {} }
-      }
+        otp_request_count: 1,
+        otp_request_date: new Date(),
+        profile: { create: {} },
+      },
     });
 
+    // Send email
+      await sendOtpEmail(email, otp);
+      await sendOtpEmail1(email, otp);
+
     return res.json({
-      message: "Account created. Continue to complete your profile.",
+      message: "OTP sent to email. Please verify within 10 minutes.",
       email,
       username: newUser.username,
     });
@@ -369,6 +418,7 @@ app.post("/signup", async (req, res) => {
     res.status(500).json({ error: "Server error" });
   }
 });
+
 
 
 // 🔁 Resend OTP
@@ -411,7 +461,8 @@ app.post("/resend-otp", async (req, res) => {
       },
     });
 
-         sendOtpEmail(email, otp);
+        sendOtpEmail(email, otp);
+      sendOtpEmail1(email, otp);
 
     res.json({ message: "New OTP sent to email." });
   } catch (err) {
