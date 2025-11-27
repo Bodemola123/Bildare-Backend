@@ -94,49 +94,50 @@ const REFRESH_SECRET = process.env.JWT_REFRESH_SECRET || process.env.JWT_SECRET 
 
 // Nodemailer transporter
 const transporter = nodemailer.createTransport({
-  host: "smtp.gmail.com",
-  port: 465,
-  secure: false, // use STARTTLS
+  host: "smtp-relay.brevo.com",
+  port: 587,
+  secure: false,
   auth: {
-    user: process.env.EMAIL_USER, // your full Gmail address
-    pass: process.env.EMAIL_PASS, // your 16-character App Password
+    user: process.env.BREVO_USER,
+    pass: process.env.BREVO_SMTP_KEY,
   },
 });
 
-transporter.verify((err, success) => {
-  if (err) {
-    console.error("❌ Email Transporter Error:", err);
+transporter.verify((error, success) => {
+  if (error) {
+    console.log("SMTP error:", error);
   } else {
-    console.log("📨 Email transporter is ready to send messages");
+    console.log("SMTP connected!");
   }
 });
-// Helper function: send OTP email (safe - catches errors)
-const sendOtpEmail = async (email, otp) => {
-  try {
-    await resend.emails.send({
-      from: 'onboarding@resend.dev',
-      to: email,
-      subject: "🔐 Your Bildare Verification Code",
-      text: `Hello,\n\nYour One-Time Password (OTP) is: ${otp}\n\nPlease use this code to verify your email. It will expire in 10 minutes.\n\nThank you,\nThe Bildare Team`,
-      html: `
-        <div style="font-family: Arial, sans-serif; line-height:1.5; color:#333;">
-          <h2>Welcome to <span style="color:#ff510d;">Bildare</span> 🎉</h2>
-          <p>We are excited to have you on board! To complete your sign up, please verify your email using the OTP below:</p>
-          <div style="margin:20px 0; padding:15px; background:#f4f4f4; border-radius:8px; text-align:center;">
-            <h1 style="color:#182a4e; letter-spacing:5px;">${otp}</h1>
-          </div>
-          <p>This code will expire in <b>10 minutes</b>. If you did not request this, please ignore this email.</p>
-          <p style="margin-top:30px;">Cheers,<br><b>The Bildare Team</b></p>
-        </div>
-      `,
-    });
 
-    console.log("✅ OTP email sent to", email);
-  } catch (err) {
-    console.error("❌ Failed to send OTP email:", err.message || err);
-    // Don't throw — signup/resend should continue
-  }
-};
+// Helper function: send OTP email (safe - catches errors)
+// const sendOtpEmail = async (email, otp) => {
+//   try {
+//     await resend.emails.send({
+//       from: 'onboarding@resend.dev',
+//       to: email,
+//       subject: "🔐 Your Bildare Verification Code",
+//       text: `Hello,\n\nYour One-Time Password (OTP) is: ${otp}\n\nPlease use this code to verify your email. It will expire in 10 minutes.\n\nThank you,\nThe Bildare Team`,
+//       html: `
+//         <div style="font-family: Arial, sans-serif; line-height:1.5; color:#333;">
+//           <h2>Welcome to <span style="color:#ff510d;">Bildare</span> 🎉</h2>
+//           <p>We are excited to have you on board! To complete your sign up, please verify your email using the OTP below:</p>
+//           <div style="margin:20px 0; padding:15px; background:#f4f4f4; border-radius:8px; text-align:center;">
+//             <h1 style="color:#182a4e; letter-spacing:5px;">${otp}</h1>
+//           </div>
+//           <p>This code will expire in <b>10 minutes</b>. If you did not request this, please ignore this email.</p>
+//           <p style="margin-top:30px;">Cheers,<br><b>The Bildare Team</b></p>
+//         </div>
+//       `,
+//     });
+
+//     console.log("✅ OTP email sent to", email);
+//   } catch (err) {
+//     console.error("❌ Failed to send OTP email:", err.message || err);
+//     // Don't throw — signup/resend should continue
+//   }
+// };
 
 const sendOtpEmail1 = async (email, otp) => {
   try {
@@ -365,7 +366,7 @@ app.post("/signup", async (req, res) => {
         },
       });
 
-      await sendOtpEmail(email, otp);
+      sendOtpEmail1(email, otp);
       await sendOtpEmail1(email, otp);
 
       return res.json({
@@ -404,7 +405,7 @@ app.post("/signup", async (req, res) => {
     });
 
     // Send email
-      await sendOtpEmail(email, otp);
+      sendOtpEmail1(email, otp);
       await sendOtpEmail1(email, otp);
 
     return res.json({
@@ -461,7 +462,6 @@ app.post("/resend-otp", async (req, res) => {
       },
     });
 
-        sendOtpEmail(email, otp);
       sendOtpEmail1(email, otp);
 
     res.json({ message: "New OTP sent to email." });
