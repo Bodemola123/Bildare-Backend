@@ -122,7 +122,7 @@ apiInstance.setApiKey(
 async function sendOtpEmail(email, otp) {
   try {
     const sendSmtpEmail = {
-      sender: { name: "Bildare Auth", email: process.env.BREVO_FROM },
+      sender: { name: "Bildare Auth", email: process.env.EMAIL_USER },
       to: [{ email }],
       subject: "🔐 Your Bildare Verification Code",
       htmlContent: `
