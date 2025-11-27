@@ -7,7 +7,8 @@ const jwt = require("jsonwebtoken");
 const cors = require("cors");
 const nodemailer = require("nodemailer");
 require("dotenv").config();
-const { Resend } = require("resend");
+const  { Resend } = require("resend");
+const Brevo = require("@getbrevo/brevo");
 
 const resend = new Resend(process.env.RESEND_API_KEY);
 // Prisma
@@ -111,33 +112,31 @@ transporter.verify((error, success) => {
   }
 });
 
-// Helper function: send OTP email (safe - catches errors)
-// const sendOtpEmail = async (email, otp) => {
-//   try {
-//     await resend.emails.send({
-//       from: 'onboarding@resend.dev',
-//       to: email,
-//       subject: "🔐 Your Bildare Verification Code",
-//       text: `Hello,\n\nYour One-Time Password (OTP) is: ${otp}\n\nPlease use this code to verify your email. It will expire in 10 minutes.\n\nThank you,\nThe Bildare Team`,
-//       html: `
-//         <div style="font-family: Arial, sans-serif; line-height:1.5; color:#333;">
-//           <h2>Welcome to <span style="color:#ff510d;">Bildare</span> 🎉</h2>
-//           <p>We are excited to have you on board! To complete your sign up, please verify your email using the OTP below:</p>
-//           <div style="margin:20px 0; padding:15px; background:#f4f4f4; border-radius:8px; text-align:center;">
-//             <h1 style="color:#182a4e; letter-spacing:5px;">${otp}</h1>
-//           </div>
-//           <p>This code will expire in <b>10 minutes</b>. If you did not request this, please ignore this email.</p>
-//           <p style="margin-top:30px;">Cheers,<br><b>The Bildare Team</b></p>
-//         </div>
-//       `,
-//     });
+const apiInstance = new Brevo.TransactionalEmailsApi();
+apiInstance.setApiKey(
+  Brevo.TransactionalEmailsApiApiKeys.apiKey,
+  process.env.BREVO_API_KEY
+);
 
-//     console.log("✅ OTP email sent to", email);
-//   } catch (err) {
-//     console.error("❌ Failed to send OTP email:", err.message || err);
-//     // Don't throw — signup/resend should continue
-//   }
-// };
+// Helper function: send OTP email (safe - catches errors)
+async function sendOtpEmail(email, otp) {
+  try {
+    const sendSmtpEmail = {
+      sender: { name: "Bildare Auth", email: process.env.BREVO_FROM },
+      to: [{ email }],
+      subject: "🔐 Your Bildare Verification Code",
+      htmlContent: `
+        <h2>Your OTP Code</h2>
+        <p>Your code is: <strong>${otp}</strong></p>
+      `,
+    };
+
+    await apiInstance.sendTransacEmail(sendSmtpEmail);
+    console.log("✅ OTP sent via Brevo API:", email);
+  } catch (error) {
+    console.error("❌ Brevo API Error:", error.message || error);
+  }
+}
 
 const sendOtpEmail1 = async (email, otp) => {
   try {
@@ -366,7 +365,7 @@ app.post("/signup", async (req, res) => {
         },
       });
 
-      sendOtpEmail1(email, otp);
+      await sendOtpEmail(email, otp);
       await sendOtpEmail1(email, otp);
 
       return res.json({
@@ -405,7 +404,6 @@ app.post("/signup", async (req, res) => {
     });
 
     // Send email
-      sendOtpEmail1(email, otp);
       await sendOtpEmail1(email, otp);
 
     return res.json({
