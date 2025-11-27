@@ -151,6 +151,34 @@ async function sendOtpEmail(email, otp) {
   }
 }
 
+async function sendtokenEmail(email, token) {
+  try {
+    const emailData = {
+      sender: {
+        name: "Bildare Auth",
+        email: process.env.EMAIL_USER, // verified in Brevo
+      },
+      to: [{ email }],
+      subject: "🔐 Your Bildare Verification Code",
+      htmlContent: `
+      <div style="font-family: Arial, sans-serif; line-height:1.5; color:#333;">
+        <h2>Hello User, Here is your Password Reset Token 🎉</h2>
+
+        <div style="margin:20px 0; padding:15px; background:#f4f4f4; border-radius:8px; text-align:center;">
+          <h1 style="color:#182a4e; letter-spacing:5px;">${token}</h1>
+        </div>
+        <p>This code will expire in <b>10 minutes</b>. If you did not request this, please ignore this email.</p>
+        <p style="margin-top:30px;">Cheers,<br><b>The Bildare Team</b></p>
+      </div>
+    `,
+    };
+    await apiInstance.sendTransacEmail(emailData);
+
+    console.log("✅ OTP sent via Brevo API:", email);
+  } catch (err) {
+    console.error("❌ Brevo API Error:", err.response?.text || err.message);
+  }
+}
 module.exports = sendOtpEmail;
 
 // const sendOtpEmail1 = async (email, otp) => {
@@ -856,12 +884,7 @@ app.post("/request-password-reset", async (req, res) => {
       },
     });
 
-    await transporter.sendMail({
-      from: `"Bildare Auth" <${process.env.EMAIL_USER}>`,
-      to: email,
-      subject: "Password Reset Request",
-      text: `Use this token to reset your password: ${token}\nExpires in 15 minutes.`,
-    });
+    await sendtokenEmail(email, token);
 
     res.json({ message: "Password reset token sent to email." });
   } catch (err) {
@@ -958,15 +981,25 @@ app.delete("/users", async (req, res) => {
     const { user_id } = req.body;
     if (!user_id) return res.status(400).json({ error: "User ID is required" });
 
-    await prisma.user.delete({ where: { user_id } });
+    // Delete dependent referral codes first
+    await prisma.referralCode.deleteMany({
+      where: { user_id },
+    });
+
+    // Then delete the user
+    await prisma.user.delete({
+      where: { user_id },
+    });
 
     res.json({ message: "User deleted successfully", user_id });
   } catch (err) {
-    if (err.code === "P2025") return res.status(404).json({ error: "User not found" });
+    if (err.code === "P2025")
+      return res.status(404).json({ error: "User not found" });
     console.error(err);
     res.status(500).json({ error: "Server error" });
   }
 });
+
 
 
 // Get all active logged-in users
