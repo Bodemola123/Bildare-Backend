@@ -438,7 +438,7 @@ app.post("/signup", async (req, res) => {
 // 🔁 Resend OTP
 app.post("/resend-otp", async (req, res) => {
   try {
-    const { email } = req.body;
+    let { email } = req.body;
 
     email = email.trim().toLowerCase();
 
@@ -475,7 +475,7 @@ app.post("/resend-otp", async (req, res) => {
       },
     });
 
-      sendOtpEmail1(email, otp);
+      sendOtpEmail(email, otp);
 
     res.json({ message: "New OTP sent to email." });
   } catch (err) {
@@ -488,7 +488,7 @@ app.post("/resend-otp", async (req, res) => {
 // 2️⃣ Verify OTP
 app.post("/verify-otp", async (req, res) => {
   try {
-    const { email, otp } = req.body;
+    let { email, otp } = req.body;
     email = email.trim().toLowerCase();
 
     if (!email || !otp) return res.status(400).json({ error: "Email and OTP are required" });
