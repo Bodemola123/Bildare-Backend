@@ -419,7 +419,7 @@ app.post("/signup", async (req, res) => {
     });
 
     // Send email
-      await sendOtpEmail1(email, otp);
+      await sendOtpEmail(email, otp);
 
     return res.json({
       message: "OTP sent to email. Please verify within 10 minutes.",
@@ -504,7 +504,7 @@ app.post("/verify-otp", async (req, res) => {
 
     await prisma.user.update({
       where: { email },
-      data: { is_verified: true, otp: null, otp_expires: null },
+      data: { is_verified: false, otp: null, otp_expires: null },
     });
 
     res.json({ message: "OTP verified. Now complete your profile." });
