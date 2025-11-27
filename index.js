@@ -547,7 +547,7 @@ app.post("/verify-otp", async (req, res) => {
 // Verify OTP then complete profile
 app.post("/complete-profile", async (req, res) => {
   try {
-    const { 
+    let { 
       email,
       username,
       role,
