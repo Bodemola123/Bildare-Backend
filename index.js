@@ -9,7 +9,7 @@ const nodemailer = require("nodemailer");
 require("dotenv").config();
 const { Resend } = require("resend");
 
-const resend = new Resend('re_3vAp1BdN_P5yK82mEWo2JD8D1gRgFNtyQ');
+const resend = new Resend(process.env.RESEND_API_KEY);
 // Prisma
 const { PrismaClient } = require("@prisma/client");
 const prisma = new PrismaClient(); // instantiate Prisma Client
