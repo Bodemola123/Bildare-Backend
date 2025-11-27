@@ -181,6 +181,50 @@ async function sendtokenEmail(email, token) {
 }
 module.exports = sendOtpEmail;
 
+async function sendmailOptions(name, email, subject, message) {
+  try {
+    const mailOptions = {
+      sender: {
+        name: "Bildare contact",
+        email: process.env.EMAIL_USER, // verified in Brevo
+      },
+      to: process.env.EMAIL_USER, // verified in Brevo
+      subject: `Contact Form: ${subject}`,
+      htmlContent:  `
+      <div style="margin:0; padding:0; font-family: 'Helvetica', Arial, sans-serif; background-color:#f4f4f4;">
+        <table width="100%" cellpadding="0" cellspacing="0" style="max-width:600px; margin:auto; background:#ffffff; border-radius:12px; overflow:hidden; box-shadow:0 0 10px rgba(0,0,0,0.1);">
+          <tr>
+            <td style="background-color:#B9F500; text-align:center; padding:20px;">
+              <h1 style="margin:0; font-size:24px; color:#000;">Bildare Contact Form</h1>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:20px; color:#333;">
+              <p style="margin:0 0 10px;"><strong>Name:</strong> ${name}</p>
+              <p style="margin:0 0 10px;"><strong>Email:</strong> ${email}</p>
+              <p style="margin:0 0 10px;"><strong>Subject:</strong> ${subject}</p>
+              <p style="margin:20px 0 5px;"><strong>Message:</strong></p>
+              <div style="padding:15px; background:#f9f9f9; border-radius:8px; color:#555; line-height:1.5;">
+                ${message.replace(/\n/g, "<br>")}
+              </div>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:20px; text-align:center; font-size:12px; color:#888;">
+              This message was sent from the Bildare website contact form.
+            </td>
+          </tr>
+        </table>
+      </div>
+      `,
+    };
+    await apiInstance.sendTransacEmail(mailOptions);
+    console.log("✅ Email sent via Brevo API:", email);
+  } catch (err) {
+    console.error("❌ Brevo API Error:", err.response?.text || err.message);
+  }
+}
+
 // const sendOtpEmail1 = async (email, otp) => {
 //   try {
 //     await transporter.sendMail({
@@ -1111,41 +1155,7 @@ app.post("/contact", async (req, res) => {
       return res.status(400).json({ error: "All fields are required." });
     }
 
-    // Compose email content
-    const mailOptions = {
-      from: `"Bildare Website Contact" <${process.env.EMAIL_USER}>`,
-      to: "bildare.auth@gmail.com",
-      subject: `📩 New Contact Form Submission: ${subject}`,
-      html: `
-      <div style="margin:0; padding:0; font-family: 'Helvetica', Arial, sans-serif; background-color:#f4f4f4;">
-        <table width="100%" cellpadding="0" cellspacing="0" style="max-width:600px; margin:auto; background:#ffffff; border-radius:12px; overflow:hidden; box-shadow:0 0 10px rgba(0,0,0,0.1);">
-          <tr>
-            <td style="background-color:#B9F500; text-align:center; padding:20px;">
-              <h1 style="margin:0; font-size:24px; color:#000;">Bildare Contact Form</h1>
-            </td>
-          </tr>
-          <tr>
-            <td style="padding:20px; color:#333;">
-              <p style="margin:0 0 10px;"><strong>Name:</strong> ${name}</p>
-              <p style="margin:0 0 10px;"><strong>Email:</strong> ${email}</p>
-              <p style="margin:0 0 10px;"><strong>Subject:</strong> ${subject}</p>
-              <p style="margin:20px 0 5px;"><strong>Message:</strong></p>
-              <div style="padding:15px; background:#f9f9f9; border-radius:8px; color:#555; line-height:1.5;">
-                ${message.replace(/\n/g, "<br>")}
-              </div>
-            </td>
-          </tr>
-          <tr>
-            <td style="padding:20px; text-align:center; font-size:12px; color:#888;">
-              This message was sent from the Bildare website contact form.
-            </td>
-          </tr>
-        </table>
-      </div>
-      `,
-    };
-
-    await transporter.sendMail(mailOptions);
+    await sendmailOptions(name, email, subject, message);
 
     res.json({ message: "Your message has been sent successfully!" });
   } catch (err) {
