@@ -577,7 +577,7 @@ app.post("/complete-profile", async (req, res) => {
     // unique username
     const usernameTaken = await prisma.user.findUnique({ where: { username } });
     if (usernameTaken && usernameTaken.user_id !== existingUser.user_id)
-      return res.status(400).json({ error: "Username already taken" });
+      return res.status(400).json({ error: "Username already taken, Please Change" });
 
     // referral code
     let referredByUserId = null;
