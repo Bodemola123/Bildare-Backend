@@ -639,6 +639,12 @@ app.post("/complete-profile", async (req, res) => {
         return res.status(400).json({ error: "Referral code already used" });
 
       referredByUserId = ref.user_id;
+
+      await prisma.referralCode.update({
+  where: { code: referralCode },
+  data: { uses: { increment: 1 } }
+});
+
     }
 
        // Remove special chars so "Henryjr. Osuji" becomes "HenryjrOsuji"
