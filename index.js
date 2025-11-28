@@ -834,7 +834,7 @@ app.get("/me", async (req, res) => {
       referralCode: user.referralCode || null,
       referred_by: user.referred_by || null,
       referredBy: user.referredBy || null, // object or null
-      referralCount, // ⭐ ADDED
+      referralCount: referralCount, // ⭐ ADDED
       accessToken: req.session.user.accessToken,
       refreshToken: req.session.user.refreshToken,
       profile: user.profile || null,
