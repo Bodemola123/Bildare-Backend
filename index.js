@@ -641,12 +641,15 @@ app.post("/complete-profile", async (req, res) => {
       referredByUserId = ref.user_id;
     }
 
+       // Remove special chars so "Henryjr. Osuji" becomes "HenryjrOsuji"
+    const cleanedUsername = username.replace(/[^a-zA-Z0-9]/g, "");
+
     // generate this user's referral code
-    const myReferralCode = username.slice(0, 4).toUpperCase() +
+    const myReferralCode = cleanedUsername.slice(0, 4).toUpperCase() +
       Math.floor(1000 + Math.random() * 9000);
 
     // update user + create profile
-const updatedUser = await prisma.user.update({
+    const updatedUser = await prisma.user.update({
   where: { user_id: existingUser.user_id },
   data: {
     username,
