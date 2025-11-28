@@ -801,27 +801,40 @@ app.post("/login", async (req, res) => {
 // ======= /me =======
 app.get("/me", async (req, res) => {
   try {
-    if (!req.session.user) return res.status(401).json({ error: "Not authenticated" });
+    if (!req.session.user)
+      return res.status(401).json({ error: "Not authenticated" });
 
+    const userId = req.session.user.user_id;
+
+    // Fetch user + profile + referrer info
     const user = await prisma.user.findUnique({
-      where: { user_id: req.session.user.user_id },
+      where: { user_id: userId },
       include: {
         profile: true,
-        referredBy: { select: { user_id: true, username: true, email: true } }, // full referrer info
+        referredBy: {
+          select: { user_id: true, username: true, email: true }
+        },
       },
     });
 
-    if (!user) return res.status(404).json({ error: "User not found" });
+    if (!user)
+      return res.status(404).json({ error: "User not found" });
+
+    // ⭐ Count number of users this person referred
+    const referralCount = await prisma.user.count({
+      where: { referred_by: userId },
+    });
 
     res.json({
       user_id: user.user_id,
       email: user.email,
       username: user.username,
       role: user.role,
-      interests: user.interests || null,          // 👈 added
-      referralCode: user.referralCode || null,    // 👈 added
-      referred_by: user.referred_by || null,      // 👈 added
-      referredBy: user.referredBy || null,        // 👈 added full object
+      interests: user.interests || null,
+      referralCode: user.referralCode || null,
+      referred_by: user.referred_by || null,
+      referredBy: user.referredBy || null, // object or null
+      referralCount, // ⭐ ADDED
       accessToken: req.session.user.accessToken,
       refreshToken: req.session.user.refreshToken,
       profile: user.profile || null,
@@ -832,6 +845,7 @@ app.get("/me", async (req, res) => {
     res.status(500).json({ error: "Server error" });
   }
 });
+
 
 
 
