@@ -1,6 +1,5 @@
 const express = require("express");
 const crypto = require("crypto");
-const fetch = require("node-fetch");
 const router = express.Router();
 
 router.post("/", async (req, res) => {
