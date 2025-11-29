@@ -23,6 +23,8 @@ model User {
   created_at    DateTime @default(now())
   updated_at    DateTime @updatedAt
   refresh_token String?
+  username_last_changed DateTime?
+
 
   otp                     String?
   otp_expires             DateTime?

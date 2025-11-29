@@ -133,8 +133,14 @@ app.use("/oauth", require("./routes/oauthRoutes"));
 
 // Root route (for testing)
 app.get("/", (req, res) => {
-  res.send("🚀 Bildare backend is running!");
+  res.json({
+    message: "🚀 Bildare backend is running!",
+    prismaFields: {
+      username_last_changed: "DateTime?"
+    }
+  });
 });
+
 
 
 // Use PORT provided by Render or fallback for local dev

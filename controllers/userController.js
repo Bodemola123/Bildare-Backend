@@ -73,3 +73,91 @@ export const getProfile = async (req, res) => {
     res.status(500).json({ error: "Server error" });
   }
 };
+
+// =================== UPDATE USER ===================
+export const updateUser = async (req, res) => {
+  try {
+    if (!req.session.user) {
+      return res.status(401).json({ error: "Not authenticated" });
+    }
+
+    const userId = req.session.user.user_id;
+    const { username, interests, avatar_url } = req.body;
+
+    // Fetch current user
+    const user = await prisma.user.findUnique({
+      where: { user_id: userId }
+    });
+
+    // ============================
+    // 📌 USERNAME CHANGE COOL-DOWN
+    // ============================
+    if (username && username !== user.username) {
+      
+      // Check if username already exists for another user
+      const existing = await prisma.user.findFirst({
+        where: {
+          username,
+          NOT: { user_id: userId }
+        }
+      });
+
+      if (existing) {
+        return res.status(400).json({ error: "Username already taken" });
+      }
+
+      // Check cooldown: 30 days (1 month)
+      if (user.username_last_changed) {
+        const lastChange = new Date(user.username_last_changed);
+        const now = new Date();
+        const diffDays = (now - lastChange) / (1000 * 60 * 60 * 24);
+
+        if (diffDays < 30) {
+          const remaining = Math.ceil(30 - diffDays);
+          return res.status(400).json({
+            error: `Username can only be changed once every 30 days. Try again in ${remaining} day(s).`
+          });
+        }
+      }
+    }
+
+    // ============================
+    // UPDATE USER
+    // ============================
+    const updatedUser = await prisma.user.update({
+      where: { user_id: userId },
+      data: {
+        username: username ?? undefined,
+        interests: interests ?? undefined,
+        // Update timestamp ONLY if username changed
+        username_last_changed:
+          username && username !== user.username
+            ? new Date()
+            : undefined,
+      }
+    });
+
+    // ============================
+    // UPDATE PROFILE
+    // ============================
+    const updatedProfile = await prisma.userProfile.update({
+      where: { user_id: userId },
+      data: {
+        avatar_url: avatar_url ?? undefined,
+      }
+    });
+
+    return res.json({
+      success: true,
+      message: "User updated successfully",
+      user: {
+        ...updatedUser,
+        profile: updatedProfile
+      }
+    });
+
+  } catch (err) {
+    console.error("Update user error:", err);
+    res.status(500).json({ error: "Server error", details: err.message });
+  }
+};
