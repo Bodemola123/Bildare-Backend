@@ -182,7 +182,7 @@ export const changePassword = async (req, res) => {
       return res.status(400).json({ error: "New passwords do not match" });
     }
 
-    // Get user
+    // Fetch user
     const user = await prisma.user.findUnique({
       where: { user_id: userId },
     });
@@ -197,10 +197,18 @@ export const changePassword = async (req, res) => {
       return res.status(400).json({ error: "Old password is incorrect" });
     }
 
+    // ❗ Prevent using old password again
+    const isSameAsOld = await bcrypt.compare(new_password, user.password_hash);
+    if (isSameAsOld) {
+      return res.status(400).json({
+        error: "New password cannot be the same as old password",
+      });
+    }
+
     // Hash new password
     const hashedNewPassword = await bcrypt.hash(new_password, 10);
 
-    // Update password in DB
+    // Update password
     await prisma.user.update({
       where: { user_id: userId },
       data: { password_hash: hashedNewPassword },
