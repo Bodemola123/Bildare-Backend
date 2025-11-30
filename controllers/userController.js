@@ -1,4 +1,5 @@
 import prisma from "../config/db.js";
+import bcrypt from "bcrypt";
 
 // ================= /me =====================
 export const getMe = async (req, res) => {
@@ -159,5 +160,62 @@ export const updateUser = async (req, res) => {
   } catch (err) {
     console.error("Update user error:", err);
     res.status(500).json({ error: "Server error", details: err.message });
+  }
+};
+
+export const changePassword = async (req, res) => {
+  try {
+    // Must be logged in
+    if (!req.session.user) {
+      return res.status(401).json({ error: "Not authenticated" });
+    }
+
+    const userId = req.session.user.user_id;
+    const { old_password, new_password, confirm_password } = req.body;
+
+    // Validate input
+    if (!old_password || !new_password || !confirm_password) {
+      return res.status(400).json({ error: "All password fields are required" });
+    }
+
+    if (new_password !== confirm_password) {
+      return res.status(400).json({ error: "New passwords do not match" });
+    }
+
+    // Get user
+    const user = await prisma.user.findUnique({
+      where: { user_id: userId },
+    });
+
+    if (!user || !user.password_hash) {
+      return res.status(400).json({ error: "Password change not allowed" });
+    }
+
+    // Verify old password
+    const isMatch = await bcrypt.compare(old_password, user.password_hash);
+    if (!isMatch) {
+      return res.status(400).json({ error: "Old password is incorrect" });
+    }
+
+    // Hash new password
+    const hashedNewPassword = await bcrypt.hash(new_password, 10);
+
+    // Update password in DB
+    await prisma.user.update({
+      where: { user_id: userId },
+      data: { password_hash: hashedNewPassword },
+    });
+
+    return res.json({
+      success: true,
+      message: "Password updated successfully",
+    });
+
+  } catch (err) {
+    console.error("Change password error:", err);
+    return res.status(500).json({
+      error: "Server error",
+      details: err.message,
+    });
   }
 };
