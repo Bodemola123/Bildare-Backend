@@ -2,20 +2,20 @@ const nodemailer = require("nodemailer");
 const Brevo = require("@getbrevo/brevo");
 const { BREVO_USER, BREVO_SMTP_KEY, BREVO_API_KEY, EMAIL_USER } = require("../config/env");
 
-const transporter = nodemailer.createTransport({
-  host: "smtp-relay.brevo.com",
-  port: 587,
-  secure: false,
-  auth: {
-    user: BREVO_USER,
-    pass: BREVO_SMTP_KEY,
-  },
-});
+// const transporter = nodemailer.createTransport({
+//   host: "smtp-relay.brevo.com",
+//   port: 587,
+//   secure: false,
+//   auth: {
+//     user: BREVO_USER,
+//     pass: BREVO_SMTP_KEY,
+//   },
+// });
 
-transporter.verify((err) => {
-  if (err) console.log("SMTP error:", err);
-  else console.log("SMTP connected!");
-});
+// transporter.verify((err) => {
+//   if (err) console.log("SMTP error:", err);
+//   else console.log("SMTP connected!");
+// });
 
 // Brevo API instance
 const apiInstance = new Brevo.TransactionalEmailsApi();
